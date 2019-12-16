@@ -1,8 +1,8 @@
 /*
- * Code for the Energy Boosters' Teams Master Smart Plug
+ * Code for the Energy Boosters' Teams Master Smart Plug on the NodeMCU 0.9 Module
 */
 
-//Required Libraries
+//Include Required Libraries
 #include<string.h>
 #include "servertext.h"
 #include<ESP8266WebServer.h>
@@ -16,24 +16,31 @@ const char *softPASS = "password";  //For the function to work, the password sho
 
 char *ssid = "alok jain";
 char *pass = "9910138138";
+
+int sflag = 0;
 //
 
-//Class Declarations
+//Class Object Declarations
 //ESP8266WifiMulti WiFimulti_Object;
 ESP8266WebServer server(80);
 //
 
 //Function Prototypes
-void LAN_setup(char*, char*);
+void sta_setup(char*, char*);
 
 void handle_root();
 void handle_notroot();
-void handle_connect_WiFi();
-void handle_WiFi_login();
+void handle_disconnect_wifi();
+void handle_connect_wifi();
+void handle_wifi_login();
 //
 
 //Setup
 void setup() {
+  //Pin Setup
+  pinMode(D0, OUTPUT);
+  digitalWrite(D0, HIGH);
+  
   // Variables
   int flag = 0;
   
@@ -53,65 +60,92 @@ void setup() {
   
   server.begin();
   Serial.print("\nHTTPS Server Started");
-  server.on("/",HTTP_GET, handle_root);
-  server.on("/Connect_WiFi",HTTP_POST, handle_connect_WiFi);
-  server.on("/WiFi_login", handle_WiFi_login);
+  server.on("/", HTTP_GET, handle_root);
+  server.on("/disconnect_wifi", HTTP_POST, handle_disconnect_wifi);
+  server.on("/connect_wifi", HTTP_POST, handle_connect_wifi);
+  server.on("/wifi_login", handle_wifi_login);
   server.onNotFound(handle_notroot);
-  
-  LAN_setup(ssid, pass); 
+
+  WiFi.begin(); 
 }
 //
 
 //Main Loop
 void loop() {
+  if(WiFi.status() == WL_CONNECTED)
+    digitalWrite(D0, LOW);
+  else
+    digitalWrite(D0, HIGH);
   server.handleClient();        // Handle Incoming HTTP requests from Clients
 }
 //
 
 // Function Definitions
-void LAN_setup(char *ssid, char* pass)    
-/* 
- *  For Setting up STA mode WiFi connections
- *  Sets up an HTML Server and uses the Access Point to get WiFi network creds from 
- *  user and setup the STA Mode Connection
-*/
+void sta_setup(char *s = ssid, char* p = pass)    
 {
-  WiFi.begin(ssid, pass);
+  /* 
+  *  For Setting up STA mode WiFi connections via user input.
+  *  Uses the HTML Server through the Soft Access Point to get WiFi network creds from 
+  *  user and setup the STA Mode Connection
+  */
+  WiFi.begin(s, p);
   Serial.println("\nConnecting via STA mode");
   while(WiFi.status() != WL_CONNECTED)
   {
-    delay(500);
-    Serial.print("..");
+    digitalWrite(D0, LOW);
+    delay(1000);
+    digitalWrite(D0, HIGH);
+    Serial.print(".");
+    sflag++;
+    if(sflag > 50)
+      break;
   }
-  Serial.print("Connection Established! IP: ");
-  Serial.print(WiFi.localIP());
+  if(sflag < 50)
+  {
+    digitalWrite(D0, LOW);
+    Serial.print("Connection Established! IP: ");
+    Serial.print(WiFi.localIP());
+  }
+  else
+    Serial.print("Connection couldn't be Established ");
+  sflag = 0;
   //WiFimulti_Object.addAP();
 }
 
 void handle_root()
 {
-  if(WiFi.status() == WL_CONNECTED)
-    server.send(200, "text/html", HTMLroot_conn); 
+  if( WiFi.status() == WL_CONNECTED )
+    server.send(200, "text/html", html_root_conn); 
   else
-    server.send(200, "text/html", HTMLroot); 
+    server.send(200, "text/html", html_root); 
 }
 
-void handle_connect_WiFi()
+void handle_disconnect_wifi()
 {
-  server.send(200, "text/html", HTMLconnect_WiFi);
+  WiFi.disconnect();
+  digitalWrite(D0,HIGH);
+  server.sendHeader("Location", "/");
+  server.send(303);
 }
 
-void handle_WiFi_login()
+void handle_connect_wifi()
 {
-  
+  if(sflag == 1)
+      server.send(200, "text/html", html_connect_wifi_tryagain);
+  else
+      server.send(200, "text/html", html_connect_wifi);
+  sflag = 0;
+}
+
+void handle_wifi_login()
+{
   if(server.hasArg("SSID") && server.hasArg("pass"))
   {
-//    LAN_setup();
     std::string ssid_user("");
     std::string pass_user("");
-    strcpy( ssid_user, server.arg("SSID"));
+//    strcpy( ssid_user, server.arg("SSID"));
 //    ssid_pass += server.arg("pass");
-    
+    sta_setup();
     if(WiFi.status() == WL_CONNECTED)
     {
       server.sendHeader("Location", "/");
@@ -119,17 +153,22 @@ void handle_WiFi_login()
     }
     else
     {
+      sflag = 1;
+      server.sendHeader("Location", "/connect_wifi");
       server.send(303);
     }
   }
   else
   {
-    
+    sflag = 1;
+    server.sendHeader("Location", "/connect_wifi");
+    server.send(303);
   }
 }
 
 void handle_notroot()
 {
-  server.send(404, "text/plain", "Not Found");
+  server.sendHeader("Location", "/");
+  server.send(303);
 }
 //

@@ -2,38 +2,74 @@
 #define servertext_h
 
 
-const char *HTMLroot = "<!DOCKTYPE html>"
+const char *html_root = "<!DOCKTYPE html>"
 "<head>"
   "<h1 align=\"center\"> Master Smart Plug 1 </h1>" 
 "</head>"
 "<body>"
-  "<form action = \"/Connect_WiFi\" method=\"POST\">"
-  "<input type =\"submit\" value=\"Connect to WiFi\">" 
+  "<form align=\"center\" action = \"/connect_wifi\" method=\"POST\">"
+  "<input align=\"center\" type =\"submit\" value=\"Connect to WiFi\">"
+  "</form>"
 "</body>";
 
 
-const char *HTMLroot_conn = "<!DOCTYPE html>"
+const char *html_root_conn = "<!DOCTYPE html>"
 "<head>" 
-  "<h1 align=\"centre\"> Master Smart Plug 1 </h1>" 
+  "<h1 align=\"center\"> Master Smart Plug 1 </h1>" 
 "</head>"
-  "<h3> WiFi Connected </h3>" 
 "<body>"
-  "<form action = \"/Connect_WiFi\" method=\"POST\">"
-  "<input type =\"submit\" value=\"Connect to Other WiFi\">"
+  "<h3 align=\"center\"> WiFi Connected </h3>" 
+  "<form align=\"center\" action = \"/connect_wifi\" method=\"POST\">"
+  "<input align=\"center\" type =\"submit\" value=\"Connect to Other WiFi\">"
+  "</form>"
+  "</br>"
+  
+  "<form align=\"center\" action = \"/disconnect_wifi\" method=\"POST\">"
+  "<input align=\"center\" type =\"submit\" value=\"Disconnect WiFi\">"
+  "</form>"
 "</body>";
 
   
-const char *HTMLconnect_WiFi = "<!DOCTYPE html>"
+const char *html_connect_wifi = "<!DOCTYPE html>"
 "<head>" 
-  "<h1><centre> Master Smart Plug 1 <centre></h1>" 
+  "<h1 align=\"center\"> Master Smart Plug 1 </h1>" 
 "</head>" 
 "<body>" 
-  "<form action = \" WiFi_login\" method=\"POST\">"
-  "<input type =\"text\" name=\"SSID\" placeholder=\"SSID\">"
+  "<h3 align=\"center\"> Enter WiFi Login Credentials </h3>"
+  "<form align=\"center\" action = \"/wifi_login\" method=\"POST\">"
+  "<input align=\"center\" type =\"text\" name=\"SSID\" placeholder=\"SSID\">"
     "</br>" 
-  "<input type =\"password\" name=\"pass\" placeholder=\"Password\">"
+  "<input align=\"center\" type =\"password\" name=\"pass\" placeholder=\"Password\">"
     "</br>"
-  "<input type =\"submit\" value=\"Connect\">"
+  "<input align=\"center\" type =\"submit\" value=\"Connect\">"
+    "</br>"
+  "</form>"
+  "</br>"
+  
+  "<form align=\"center\" action = \"/\" method=\"POST\">"
+  "<input align=\"center\" type =\"submit\" value=\"Home\">"
+  "</form>"
+"</head>";
+
+
+const char *html_connect_wifi_tryagain = "<!DOCTYPE html>"
+"<head>" 
+  "<h1 align=\"center\">Master Smart Plug 1 </h1>" 
+"</head>" 
+"<body>" 
+  "<h3 align=\"center\"> Couldn't Connect to WiFi, try again </h3>"
+  "<form align=\"center\" action = \" wifi_login\" method=\"POST\">"
+  "<input align=\"center\" type =\"text\" name=\"SSID\" placeholder=\"SSID\">"
+    "</br>" 
+  "<input align=\"center\" type =\"password\" name=\"pass\" placeholder=\"Password\">"
+    "</br>"
+  "<input align=\"center\" type =\"submit\" value=\"Connect\">"
+    "</br>"
+  "</form>"
+  "</br>"
+  "<form align=\"center\" action = \"/\" method=\"POST\">"
+  "<input align=\"center\" type =\"submit\" value=\"Home\">"
+  "</form>"
 "</head>";
 
 
