@@ -3,25 +3,33 @@
 */
 
 //Required Libraries
+#include<string.h>
+#include "servertext.h"
+#include<ESP8266WebServer.h>
 #include<ESP8266WiFi.h>
 //#include<ESP8266WiFiMulti.h>
-//#include<ESP8266mDNS.h>
 //
 
 //Constants Declarations
 const char *softSSID = "Master";    //Credentials for Master Access Point
 const char *softPASS = "password";  //For the function to work, the password should be more than 8 chars and should begin with a char too
 
-const char *ssid = "alok jain";
-const char *pass = "9910138138";
+char *ssid = "alok jain";
+char *pass = "9910138138";
 //
 
 //Class Declarations
 //ESP8266WifiMulti WiFimulti_Object;
+ESP8266WebServer server(80);
 //
 
 //Function Prototypes
-void LAN_setup();
+void LAN_setup(char*, char*);
+
+void handle_root();
+void handle_notroot();
+void handle_connect_WiFi();
+void handle_WiFi_login();
 //
 
 //Setup
@@ -39,41 +47,37 @@ void setup() {
   bool ret = WiFi.softAP(softSSID, softPASS);
   if (ret == true)
   {
-    Serial.print("Soft Access Point Started with IP: ");
+    Serial.print("\nSoft Access Point Started with IP: ");
     Serial.print(WiFi.softAPIP());
   }
-//  if(!WiFi.begin())                   //Checks for the presence of Previous Network Connection                                   //and Connects. Otherwise Calls LAN_setup()
-    LAN_setup();
-   
-/*  Serial.println("\nStarting mDNS Responder");
-  while(!MDNS.begin("mastersp"))
-  {
-    flag++;
-    if(flag > 50)
-      break;
-  }
-  flag > 50 ? Serial.println("\nCould not begin mDNS server, Consider Reset") : Serial.println("\nmDNS Responder Active");
-  flag = 0; 
-*/
   
+  server.begin();
+  Serial.print("\nHTTPS Server Started");
+  server.on("/",HTTP_GET, handle_root);
+  server.on("/Connect_WiFi",HTTP_POST, handle_connect_WiFi);
+  server.on("/WiFi_login", handle_WiFi_login);
+  server.onNotFound(handle_notroot);
+  
+  LAN_setup(ssid, pass); 
 }
 //
 
 //Main Loop
 void loop() {
- 
+  server.handleClient();        // Handle Incoming HTTP requests from Clients
 }
 //
 
 // Function Definitions
-void LAN_setup()    
+void LAN_setup(char *ssid, char* pass)    
 /* 
- *  Setting up for the first time OR when the Master has been reset
- *  Sets up an HTML Server and uses the Access Point to setup the STA Mode Connection
+ *  For Setting up STA mode WiFi connections
+ *  Sets up an HTML Server and uses the Access Point to get WiFi network creds from 
+ *  user and setup the STA Mode Connection
 */
 {
   WiFi.begin(ssid, pass);
-  Serial.println("Connecting via STA mode..");
+  Serial.println("\nConnecting via STA mode");
   while(WiFi.status() != WL_CONNECTED)
   {
     delay(500);
@@ -82,5 +86,50 @@ void LAN_setup()
   Serial.print("Connection Established! IP: ");
   Serial.print(WiFi.localIP());
   //WiFimulti_Object.addAP();
+}
+
+void handle_root()
+{
+  if(WiFi.status() == WL_CONNECTED)
+    server.send(200, "text/html", HTMLroot_conn); 
+  else
+    server.send(200, "text/html", HTMLroot); 
+}
+
+void handle_connect_WiFi()
+{
+  server.send(200, "text/html", HTMLconnect_WiFi);
+}
+
+void handle_WiFi_login()
+{
+  
+  if(server.hasArg("SSID") && server.hasArg("pass"))
+  {
+//    LAN_setup();
+    std::string ssid_user("");
+    std::string pass_user("");
+    strcpy( ssid_user, server.arg("SSID"));
+//    ssid_pass += server.arg("pass");
+    
+    if(WiFi.status() == WL_CONNECTED)
+    {
+      server.sendHeader("Location", "/");
+      server.send(303);
+    }
+    else
+    {
+      server.send(303);
+    }
+  }
+  else
+  {
+    
+  }
+}
+
+void handle_notroot()
+{
+  server.send(404, "text/plain", "Not Found");
 }
 //
