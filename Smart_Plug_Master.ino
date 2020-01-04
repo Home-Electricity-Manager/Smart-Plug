@@ -4,8 +4,11 @@
 
 //Include Required Libraries
 #include "servertext.h"             // HTML for the Web Server
-#include <ESP8266WebServer.h>       
 #include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>       
+#include <EmonLib.h>
+#include <NTPClient.h>
+#include <WiFiUDP.h>
 //#include<ESP8266WiFiMulti.h>
 //
 
@@ -18,11 +21,19 @@ IPAddress softAP_gateway(192,168,0,1);
 IPAddress softAP_subnet(255,255,255,0);
  
 int sflag = 0;
+int cflag = 0;
+
+const long int offset = 19800;
 //
 
 //Class Object Declarations
 //ESP8266WifiMulti WiFimulti_Object;
 ESP8266WebServer server(80);
+
+EnergyMonitor curr;
+
+WiFiUDP ntp_udp_client;
+NTPClient time_object(ntp_udp_client, "asia.pool.ntp.org", offset);
 //
 
 //Function Prototypes
@@ -41,6 +52,7 @@ void setup() {
   //Pin Setup
   pinMode(D4, OUTPUT);      //LED Indication for WiFi Connection
   digitalWrite(D4, HIGH);
+  pinMode(A0, INPUT);
   
   // Variables
   int flag = 0;
@@ -53,7 +65,7 @@ void setup() {
   WiFi.mode(WIFI_AP_STA);
   //Begin WiFi Access Point Mode
   WiFi.softAPConfig(softAP_ip, softAP_gateway, softAP_subnet);
-  bool ret = WiFi.softAP(softSSID, softPASS, 1, false, 5);
+  bool ret = WiFi.softAP(softSSID, softPASS, 1, false, 6);
   if (ret == true)
   {
     Serial.print("\nSoft Access Point Started with IP: ");
@@ -70,16 +82,36 @@ void setup() {
   server.on("/connect_wifi", HTTP_POST, handle_connect_wifi);
   server.on("/wifi_login", handle_wifi_login);
   server.onNotFound(handle_notfound);
+
+  //Current Measurement Setup
+  curr.current(1, 4.8);
 }
 //
 
 //Main Loop
 void loop() {
+  server.handleClient();            //Handle Incoming HTTP requests from Clients
+  
+  double curr_raw;
   if(WiFi.status() == WL_CONNECTED) //WiFi connection LED Indication
-    digitalWrite(D4, LOW);
+      digitalWrite(D4, LOW);
   else
     digitalWrite(D4, HIGH);
-  server.handleClient();            // Handle Incoming HTTP requests from Clients
+  if(time_object.getSeconds() % 10 == 0 && cflag == 0)
+  {  
+    curr_raw = analogRead(A0);
+    curr_raw = curr.calcIrms(1480);
+    Serial.println();
+    Serial.print(time_object.getFormattedTime());
+    Serial.print(time_object.getDay());
+    Serial.println();
+    Serial.print(curr_raw);
+    Serial.print("\nNo. of Station Connected to AP: ");
+    Serial.print(WiFi.softAPgetStationNum());
+    cflag = 1;
+  }
+  else if(time_object.getSeconds() % 10 != 0)
+    cflag = 0;
 }
 //
 
