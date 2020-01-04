@@ -103,7 +103,6 @@ void loop() {
     curr_raw = curr.calcIrms(1480);
     Serial.println();
     Serial.print(time_object.getFormattedTime());
-    Serial.print(time_object.getDay());
     Serial.println();
     Serial.print(curr_raw);
     Serial.print("\nNo. of Station Connected to AP: ");

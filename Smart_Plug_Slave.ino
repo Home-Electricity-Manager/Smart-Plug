@@ -10,11 +10,8 @@
 
 
 //Constants Declarations
-const char *ssid = "alok jain";    //Credentials for Connection to Master Access Point
-const char *pass = "9910138138";  
-
-WiFiUDP ntpClient;
-NTPClient time_object(ntpClient, "pool.ntp.org", 19800);
+const char *ssid = "Master";    //Credentials for Connection to Master Access Point
+const char *pass = "password";  
 
 void setup() {
   // put your setup code here, to run once:
@@ -24,11 +21,9 @@ void setup() {
   {
     Serial.print(".");
   }
-  time_object.begin();
-  time_object.update();
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
-  Serial.println(time_object.getFormattedTime());
+  
 }
