@@ -36,7 +36,7 @@ Used for setting up the udp connection required for the NTPClient Server Commuin
 The NodeMCU has two WiFi Modes, the Station Mode and the Access Point Mode
 Station mode is used to connect to our home network and the Access Point mode makes the 
 master an Access Point through which the WebServer will be accessed. The following code 
-describes the basic config of the access point.
+describes the basic config of the access point and other constants hat are used in the later functions
 
 ~~~
 //Constants Declarations
@@ -46,4 +46,25 @@ const char *softPASS = "password";  //For the function to work, the password sho
 IPAddress softAP_ip(192,168,0,1);         //IP config for the soft Access Point
 IPAddress softAP_gateway(192,168,0,1);
 IPAddress softAP_subnet(255,255,255,0);
+
+int sflag = 0;
+int cflag = 0;
+
+const long int offset = 19800;
 ~~~
+
+Objects that will be used are declared as follows
+~~~
+//Class Object Declarations
+//ESP8266WifiMulti WiFimulti_Object;
+ESP8266WebServer server(80);
+
+EnergyMonitor curr;
+
+WiFiUDP ntp_udp_client;
+NTPClient time_object(ntp_udp_client, "asia.pool.ntp.org", offset);
+//
+~~~
+ESP8266WebServer class is used for the methods of the webserver. 80 declares the network 
+port used for the webserver, which is default for HTML.
+The EnergyMonitor class contains the methods used to calculate the RMS value of Current. 
