@@ -99,3 +99,50 @@ This function is used to dynamically connect to a home wifi network using the We
 Used for the behavior of the webserver and redirecting webpages
 **There is an Outstanding Issue with this. When Incorrect Login info is passed throught the server, the webpage isn't returned soon enough and the browser considers it a time out and hence an error is produced. Haven't figured out a way to delay the redirection as of now**
 
+
+The Setup function is described below:
+~~~
+//Setup
+void setup() {
+
+  //Pin Setup
+  pinMode(D4, OUTPUT);      //LED Indication for WiFi Connection
+  digitalWrite(D4, HIGH);
+  pinMode(A0, INPUT);
+  
+  // Variables
+  int flag = 0;
+  
+  // Begin Serial Communication
+  Serial.begin(115200);
+  Serial.println("\nBegin Serial Communication With NodeMCU");
+
+  //Begin WiFi Connections
+  WiFi.mode(WIFI_AP_STA);
+  //Begin WiFi Access Point Mode
+  WiFi.softAPConfig(softAP_ip, softAP_gateway, softAP_subnet);
+  bool ret = WiFi.softAP(softSSID, softPASS, 1, false, 6);
+  if (ret == true)
+  {
+    Serial.print("\nSoft Access Point Started with IP: ");
+    Serial.print(WiFi.softAPIP());
+  }
+  //Attempts WiFi Connection to the last connected network
+  WiFi.begin(); 
+
+  //HTML Server and Handles
+  server.begin();
+  Serial.print("\nHTTPS Server Started");
+  server.on("/", HTTP_GET, handle_root);
+  server.on("/disconnect_wifi", HTTP_POST, handle_disconnect_wifi);
+  server.on("/connect_wifi", HTTP_POST, handle_connect_wifi);
+  server.on("/wifi_login", handle_wifi_login);
+  server.onNotFound(handle_notfound);
+
+  //Current Measurement Setup
+  curr.current(1, 4.8);
+}
+//
+~~~
+pinModes are used to declare the I/O pins on the NodeMCU as Input or output
+The Pin digital pin D4 gives us the status of the 
