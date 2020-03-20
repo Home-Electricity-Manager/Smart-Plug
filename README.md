@@ -25,8 +25,24 @@ Used to calculate the current drawn
 *NTPClient.h*
 
 Uses UDP protocol to connect to a NTP Server. IS used to sync time with the master plug.
-**Currently having Issues with syncing time with a server. The issue is resolved when the flexible WiFi Connection feature isnt used, i.e. when I preset the WiFi SSID and password. Cannot seem to make it work otherwise**
+**Currently having Issues with syncing time with a server. The issue is resolved when the flexible WiFi Connection feature isnt used, i.e. when I preset the WiFi SSID and password. Cannot seem to make it work otherwise. Suspected problem is with the UDP Connection**
 
+*WiFiUDP.h*
 
+Used for setting up the udp connection required for the NTPClient Server Commuincation.
 
+**PROGRAM DESCRIPTION**
 
+The NodeMCU has two WiFi Modes, the Station Mode and the Access Point Mode.
+Station mode is used to connect to out home network and the Access Point mode makes the 
+master an Access Point through which the WebServer will be accessed.
+
+~~~
+//Constants Declarations
+const char *softSSID = "Master";    //Credentials for Master Access Point
+const char *softPASS = "password";  //For the function to work, the password should be more than 8 chars and should begin with a char too
+
+IPAddress softAP_ip(192,168,0,1);         //IP config for the soft Access Point
+IPAddress softAP_gateway(192,168,0,1);
+IPAddress softAP_subnet(255,255,255,0);
+~~~
