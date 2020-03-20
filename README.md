@@ -163,3 +163,39 @@ Next, the HTML server is started and handles are defined using server.on method
 
 curr.current confiures the sapling cycles and calibration factor based off the hardware.
 
+~~~
+//Main Loop
+void loop() {
+  server.handleClient();            //Handle Incoming HTTP requests from Clients
+  
+  double curr_raw;
+  if(WiFi.status() == WL_CONNECTED) //WiFi connection LED Indication
+      digitalWrite(D4, LOW);
+  else
+    digitalWrite(D4, HIGH);
+  if(time_object.getSeconds() % 10 == 0 && cflag == 0)
+  {  
+    curr_raw = analogRead(A0);
+    curr_raw = curr.calcIrms(1480);
+    Serial.println();
+    Serial.print(time_object.getFormattedTime());
+    Serial.println();
+    Serial.print(curr_raw);
+    Serial.print("\nNo. of Station Connected to AP: ");
+    Serial.print(WiFi.softAPgetStationNum());
+    cflag = 1;
+  }
+  else if(time_object.getSeconds() % 10 != 0)
+    cflag = 0;
+}
+//
+~~~
+
+server.handleClient() handles all the incoming HTTP requests from the Clients
+if WiFi successfully connects using the last known creds then tis is indicated using 
+the pin D4 else it's turned off.
+
+Using if statement, every 10 seconds, the value through the current sensor is read 
+and RMS Current is calculated using which the apparent power is calculated taking 
+V = 230V.  
+Assuming P.F. ~ 1 gives us the active power which is a reasonable assumption in most cases.
