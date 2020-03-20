@@ -33,6 +33,8 @@ Used for setting up the udp connection required for the NTPClient Server Commuin
 
 **PROGRAM DESCRIPTION**
 
+**Preprocessing and Declarations**
+
 The NodeMCU has two WiFi Modes, the Station Mode and the Access Point Mode
 Station mode is used to connect to our home network and the Access Point mode makes the 
 master an Access Point through which the WebServer will be accessed. The following code 
@@ -72,3 +74,28 @@ WiFiUDP class declares an object used for the UDP connection
 
 NTPClient class uses a constructor taking in the UDP object, NTPServer and the Time Offset 
 that is declred in the constants above
+
+**Function Descriptions**
+The Following Functions are used in the Program:
+~~~
+//Function Prototypes
+void sta_setup(char*, char*);
+
+void handle_root();
+void handle_notfound();
+void handle_disconnect_wifi();
+void handle_connect_wifi();
+void handle_wifi_login();
+//
+~~~
+Other than this, the void setup and loop do the same thing as in an Arduino
+
+*void sta_setup()*
+
+This function is used to dynamically connect to a home wifi network using the WebServer.
+
+*void handle_root ...... handle_wifi_login()*
+
+Used for the behavior of the webserver and redirecting webpages
+**There is an Outstanding Issue with this. When Incorrect Login info is passed throught the server, the webpage isn't returned soon enough and the browser considers it a time out and hence an error is produced. Haven't figured out a way to delay the redirection as of now**
+
