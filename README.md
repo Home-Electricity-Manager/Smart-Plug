@@ -208,3 +208,8 @@ void handle_connect_wifi() : handles new wifi connection landing
 
 void handle_wifi_logon() : handles wifi connection when creds are passed on
 This handle uses the *void sta_setup()* method to connect to the WiFi Network once the network creds has been received from the user.
+
+
+
+**Once Pub Sub Topics have been added to this, The Appliance control will be done through a Relay for which one more Digital Pin will be used as Output Pin. Power will be stored Interval wise and averaged over a single cloud transmission inverval eg. 5 minutes.
+The control value will be obtained from Sub topic and power values will be uploaded via a Pub topic**
