@@ -62,7 +62,8 @@ void setup() {
   Serial.println("\nBegin Serial Communication With NodeMCU");
 
   //Begin WiFi Connections
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_AP_STA);   //Declares the WiFi Mode as Station plus Access Point
+  
   //Begin WiFi Access Point Mode
   WiFi.softAPConfig(softAP_ip, softAP_gateway, softAP_subnet);
   bool ret = WiFi.softAP(softSSID, softPASS, 1, false, 6);
