@@ -33,9 +33,10 @@ Used for setting up the udp connection required for the NTPClient Server Commuin
 
 **PROGRAM DESCRIPTION**
 
-The NodeMCU has two WiFi Modes, the Station Mode and the Access Point Mode.
-Station mode is used to connect to out home network and the Access Point mode makes the 
-master an Access Point through which the WebServer will be accessed.
+The NodeMCU has two WiFi Modes, the Station Mode and the Access Point Mode
+Station mode is used to connect to our home network and the Access Point mode makes the 
+master an Access Point through which the WebServer will be accessed. The following code 
+describes the basic config of the access point.
 
 ~~~
 //Constants Declarations
