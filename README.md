@@ -118,7 +118,8 @@ void setup() {
   Serial.println("\nBegin Serial Communication With NodeMCU");
 
   //Begin WiFi Connections
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_AP_STA);   //Declares the WiFi Mode as Station plus Access Point
+  
   //Begin WiFi Access Point Mode
   WiFi.softAPConfig(softAP_ip, softAP_gateway, softAP_subnet);
   bool ret = WiFi.softAP(softSSID, softPASS, 1, false, 6);
@@ -145,4 +146,9 @@ void setup() {
 //
 ~~~
 pinModes are used to declare the I/O pins on the NodeMCU as Input or output
-The Pin digital pin D4 gives us the status of the 
+The digital pin D4 is connected to a status LED that indicates the Status of the station
+mode connection i.e connection to the Home Network.
+The Analog pin A0 is used to read the output from the current sensor and it's sensed value is
+used to calculate the RMS current.
+
+Serial.begin is used begin serial communication with our Arduino IDE.
