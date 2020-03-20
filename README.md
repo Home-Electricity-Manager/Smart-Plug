@@ -152,3 +152,14 @@ The Analog pin A0 is used to read the output from the current sensor and it's se
 used to calculate the RMS current.
 
 Serial.begin is used begin serial communication with our Arduino IDE.
+
+softApConfig configures the soft access point with the given IP config details declared before
+if the method returns true then it prints so on the serial monitor
+
+After the soft Access Point is started the WiFi.begin() statement attempts STA 
+mode connection to the last known WiFi network
+
+Next, the HTML server is started and handles are defined using server.on method
+
+curr.current confiures the sapling cycles and calibration factor based off the hardware.
+
