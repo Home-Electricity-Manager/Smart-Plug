@@ -199,3 +199,12 @@ Using if statement, every 10 seconds, the value through the current sensor is re
 and RMS Current is calculated using which the apparent power is calculated taking 
 V = 230V.  
 Assuming P.F. ~ 1 gives us the active power which is a reasonable assumption in most cases.
+
+void handle_root() : Home Page hosted on the WebServer
+
+void handle_disconnect_wifi() : disconnects WiFi on disconnect button press on home page
+
+void handle_connect_wifi() : handles new wifi connection landing
+
+void handle_wifi_logon() : handles wifi connection when creds are passed on
+This handle uses the *void sta_setup()* method to connect to the WiFi Network once the network creds has been received from the user.
