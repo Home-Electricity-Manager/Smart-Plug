@@ -9,25 +9,27 @@
 #include <EmonLib.h>
 #include <NTPClient.h>
 #include <WiFiUDP.h>
-//#include<ESP8266WiFiMulti.h>
 //
 
 //Constants Declarations
+#define wifi_led D4
+
 const char *softSSID = "Master";    //Credentials for Master Access Point
 const char *softPASS = "password";  //For the function to work, the password should be more than 8 chars and should begin with a char too
 
-IPAddress softAP_ip(192,168,0,1);         //IP config for the soft Access Point
-IPAddress softAP_gateway(192,168,0,1);
+IPAddress softAP_ip(192,168,5,1);         //IP config for the soft Access Point
+IPAddress softAP_gateway(192,168,5,1);
 IPAddress softAP_subnet(255,255,255,0);
  
 int sflag = 0;
 int cflag = 0;
 
 const long int offset = 19800;
+
+int voltage = 230;
 //
 
 //Class Object Declarations
-//ESP8266WifiMulti WiFimulti_Object;
 ESP8266WebServer server(80);
 
 EnergyMonitor curr;
@@ -50,8 +52,8 @@ void handle_wifi_login();
 void setup() {
 
   //Pin Setup
-  pinMode(D4, OUTPUT);      //LED Indication for WiFi Connection
-  digitalWrite(D4, HIGH);
+  pinMode(wifi_led, OUTPUT);      //LED Indication for WiFi Connection
+  digitalWrite(wifi_led, HIGH);   //WiFi Not Connected
   pinMode(A0, INPUT);
   
   // Variables
@@ -66,12 +68,13 @@ void setup() {
   
   //Begin WiFi Access Point Mode
   WiFi.softAPConfig(softAP_ip, softAP_gateway, softAP_subnet);
-  bool ret = WiFi.softAP(softSSID, softPASS, 1, false, 6);
+  bool ret = WiFi.softAP(softSSID, softPASS);
   if (ret == true)
   {
     Serial.print("\nSoft Access Point Started with IP: ");
     Serial.print(WiFi.softAPIP());
   }
+  
   //Attempts WiFi Connection to the last connected network
   WiFi.begin(); 
 
@@ -85,7 +88,9 @@ void setup() {
   server.onNotFound(handle_notfound);
 
   //Current Measurement Setup
-  curr.current(1, 4.8);
+  curr.current(A0, 4.8);
+
+  time_object.begin();
 }
 //
 
@@ -95,7 +100,11 @@ void loop() {
   
   double curr_raw;
   if(WiFi.status() == WL_CONNECTED) //WiFi connection LED Indication
-      digitalWrite(D4, LOW);
+  {
+    digitalWrite(D4, LOW);
+    if(time_object.getSeconds() == 0)
+      time_object.update();
+  }
   else
     digitalWrite(D4, HIGH);
   if(time_object.getSeconds() % 10 == 0 && cflag == 0)
