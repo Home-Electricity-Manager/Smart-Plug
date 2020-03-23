@@ -41,6 +41,8 @@ master an Access Point through which the WebServer will be accessed. The followi
 describes the basic config of the access point and other constants that are used in the later functions
 ~~~
 //Constants Declarations
+#define wifi_led D4
+
 const char *softSSID = "Master";    //Credentials for Master Access Point
 const char *softPASS = "password";  //For the function to work, the password should be more than 8 chars and should begin with a char too
 
@@ -52,6 +54,8 @@ int sflag = 0;
 int cflag = 0;
 
 const long int offset = 19800;
+
+int voltage = 230;
 ~~~
 Objects that will be used are declared as follows
 ~~~
@@ -106,8 +110,8 @@ The Setup function is described below:
 void setup() {
 
   //Pin Setup
-  pinMode(D4, OUTPUT);      //LED Indication for WiFi Connection
-  digitalWrite(D4, HIGH);
+  pinMode(wifi_led, OUTPUT);      //LED Indication for WiFi Connection
+  digitalWrite(wifi_led, HIGH);
   pinMode(A0, INPUT);
   
   // Variables
@@ -142,6 +146,8 @@ void setup() {
 
   //Current Measurement Setup
   curr.current(1, 4.8);
+  
+  time_object.begin();
 }
 //
 ~~~
