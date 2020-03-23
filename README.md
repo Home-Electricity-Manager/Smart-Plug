@@ -133,8 +133,9 @@ void setup() {
     Serial.print(WiFi.softAPIP());
   }
   //Attempts WiFi Connection to the last connected network
-  WiFi.begin(); 
-
+  -----------------
+  WiFi.begin();       //NTP Sync Issue
+  -----------------
   //HTML Server and Handles
   server.begin();
   Serial.print("\nHTTPS Server Started");
