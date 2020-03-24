@@ -25,6 +25,7 @@ int sflag = 0;
 int pflag = 0;                             //Flags used for System Operations
 int wflag = 0;
 bool ret;                                  //For Various Connection Result Return Values 
+bool time_synced = false;                  //Keeps Track of Whether Time is Set Correctly or not
 const long int offset = 19800;             //+05:30 GMT
 const long int auto_update_int = 85600;    //AutoSync from NTP Server Everyday
 
@@ -51,6 +52,7 @@ void handle_wifi_login();
 
 void sta_setup(char*, char*);
 void begin_ap();
+//void close_ap();
 //
 
 //Setup
@@ -90,6 +92,7 @@ void setup() {
 
 //Main Loop
 void loop() {
+  
   if(::wflag == 0)
   {
     WiFi.begin();
@@ -102,7 +105,7 @@ void loop() {
     }
     if(::wflag == conn_wp)
     {
-      Serial.print("\nError : Couldnt Connect to Network");
+      Serial.print("\nWarning : Couldnt Connect to Network");
       delay(1000);
     }
     else
@@ -111,7 +114,9 @@ void loop() {
       Serial.print(WiFi.SSID());
       Serial.print("\nIP Address: ");
       Serial.print(WiFi.localIP());
-      time_object.update(); 
+      ret = time_object.update();
+      ret ? Serial.print("\nTime Sync Successful") :  Serial.print("\nWarning : Time Sync Failed");
+      ret ? ::time_synced = true : ::time_synced = false;
     }
   }
     
@@ -119,7 +124,10 @@ void loop() {
   {
     digitalWrite(D4, LOW);
     if(time_object.getSeconds() == 0)
-      time_object.update();
+    {
+      ret = time_object.update();
+      !::time_synced && ret ? ::time_synced = true : ret ;   //Set Flag to true if previously false
+    }
   }
   else
   {
@@ -128,20 +136,38 @@ void loop() {
   
   server.handleClient();            //Handle Incoming HTTP requests from Clients
 
+  //Serial Print Energy and Time Data Every 10 sec
   if(time_object.getSeconds() % 10 == 0 && pflag == 0)
-  {  
-    curr_raw = analogRead(A0);
-    curr_raw = curr.calcIrms(1480);
+  { 
+    //Print Config Data Every 300 sec
+    if(time_object.getMinutes() % 5 == 0 && time_object.getSeconds() == 0)
+    {
+      Serial.print("\n\nConfig Data :");
+      Serial.print("\nWiFi Connected : ");
+      if(WiFi.status() == WL_CONNECTED) 
+      {
+        Serial.print("YES"); 
+        Serial.print("\nSSID : ");
+        Serial.print(WiFi.SSID());
+        Serial.print("\nIP : ");
+        Serial.print(WiFi.localIP());
+      }
+      else
+        Serial.print("NO");
+      
+      Serial.print("\nStations Connected to AP: ");
+      Serial.print(WiFi.softAPgetStationNum());
+    }
+    
+    curr_raw = curr.calcIrms(400);
     power = voltage*curr_raw;
-    Serial.println();
-    Serial.print(time_object.getFormattedTime());
-    Serial.println();
+    Serial.print("\n\nEnergy Data : ");
+    Serial.print("\nTimeStamp : ");
+    Serial.print(time_object.getEpochTime());
+    Serial.print("\nCurrent(A) : ");
     Serial.print(curr_raw);
-    Serial.print("A\n");
+    Serial.print("\nPower (W) : ");
     Serial.print(power);
-    Serial.print("W");
-    Serial.print("\nNo. of Station Connected to AP: ");
-    Serial.print(WiFi.softAPgetStationNum());
     pflag = 1;
   }
   else if(time_object.getSeconds() % 10 != 0)
@@ -195,6 +221,7 @@ void handle_wifi_login()
         s[j] = ssid_user[j];
       s[j+1] = '\0';
     }
+    Serial.print("\n\nRequest Received for STA WiFi Connection : ");
     Serial.print("\nSSID: ");
     Serial.print(s);
 
@@ -268,7 +295,11 @@ void sta_setup(char *s, char* p)
     digitalWrite(D4, LOW);
     Serial.print("\nConnection Established! IP: ");
     Serial.print(WiFi.localIP());
-    time_object.update();
+    if(!::time_synced)
+    {
+      ret = time_object.update();
+      ret ? ::time_synced = true : ::time_synced = false;
+    }
   }
   else
     Serial.print("\nConnection couldn't be Established");
