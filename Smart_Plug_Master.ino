@@ -6,27 +6,31 @@
 #include "servertext.h"             // HTML for the Web Server
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>       
-#include <EmonLib.h>
+#include <EmonLibUser.h>            // EmonLib with Bias Value Customised to calibrate with hardware.
 #include <NTPClient.h>
 #include <WiFiUDP.h>
 //
 
 //Constants Declarations
-#define wifi_led D4
-
-const char *softSSID = "Master";    //Credentials for Master Access Point
-const char *softPASS = "password";  //For the function to work, the password should be more than 8 chars and should begin with a char too
-
-IPAddress softAP_ip(192,168,5,1);         //IP config for the soft Access Point
-IPAddress softAP_gateway(192,168,5,1);
+#define ind_led D4                         //LED for Physical Indication of Device
+#define curr_inp A0                        //Analog Pin for Current Measurement
+#define conn_wp 20                         //Wait Period for WiFi Connection in seconds
+#define voltage 230                        //Assumed Constant Voltage
+const char *softSSID = "smartswitch";      //Credentials for Master Access Point
+const char *softPASS = "smartswitch";      //For the function to work, the password should be more than 8 chars and should begin with a char too
+IPAddress softAP_ip(192,168,5,1);
+IPAddress softAP_gateway(192,168,5,1);     //IP config for the soft Access Point
 IPAddress softAP_subnet(255,255,255,0);
- 
 int sflag = 0;
-int cflag = 0;
+int pflag = 0;                             //Flags used for System Operations
+int wflag = 0;
+bool ret;                                  //For Various Connection Result Return Values 
+const long int offset = 19800;             //+05:30 GMT
+const long int auto_update_int = 85600;    //AutoSync from NTP Server Everyday
 
-const long int offset = 19800;
-
-int voltage = 230;
+double curr_raw;
+double power;
+float curr_calib = 4.8;
 //
 
 //Class Object Declarations
@@ -35,52 +39,41 @@ ESP8266WebServer server(80);
 EnergyMonitor curr;
 
 WiFiUDP ntp_udp_client;
-NTPClient time_object(ntp_udp_client, "asia.pool.ntp.org", offset);
+NTPClient time_object(ntp_udp_client, "time.nist.gov", offset, auto_update_int);
 //
 
 //Function Prototypes
-void sta_setup(char*, char*);
-
 void handle_root();
 void handle_notfound();
 void handle_disconnect_wifi();
 void handle_connect_wifi();
 void handle_wifi_login();
+
+void sta_setup(char*, char*);
+void begin_ap();
 //
 
 //Setup
 void setup() {
 
   //Pin Setup
-  pinMode(wifi_led, OUTPUT);      //LED Indication for WiFi Connection
-  digitalWrite(wifi_led, HIGH);   //WiFi Not Connected
-  pinMode(A0, INPUT);
-  
-  // Variables
-  int flag = 0;
-  
-  // Begin Serial Communication
+  pinMode(ind_led, OUTPUT);      //LED Indication for WiFi Connection
+  digitalWrite(ind_led, HIGH);   //WiFi Not Connected
+  pinMode(curr_inp, INPUT);      //Current Measurement
+
+  // Begin Serial Communication with Arduino IDE
   Serial.begin(115200);
-  Serial.println("\nBegin Serial Communication With NodeMCU");
+  Serial.print("\nSuccesfully began Serial Communication With NodeMCU\n");
 
-  //Begin WiFi Connections
+  //Begin WiFi Mode
   WiFi.mode(WIFI_AP_STA);   //Declares the WiFi Mode as Station plus Access Point
-  
-  //Begin WiFi Access Point Mode
-  WiFi.softAPConfig(softAP_ip, softAP_gateway, softAP_subnet);
-  bool ret = WiFi.softAP(softSSID, softPASS);
-  if (ret == true)
-  {
-    Serial.print("\nSoft Access Point Started with IP: ");
-    Serial.print(WiFi.softAPIP());
-  }
-  
-  //Attempts WiFi Connection to the last connected network
-  WiFi.begin(); 
 
+  //WiFi Access Point Mode Moved to an External function declared as begin_ap();
+  begin_ap();
+  
   //HTML Server and Handles
   server.begin();
-  Serial.print("\nHTTPS Server Started");
+  Serial.print("\nStarting HTTPS WebServer");
   server.on("/", HTTP_GET, handle_root);
   server.on("/disconnect_wifi", HTTP_POST, handle_disconnect_wifi);
   server.on("/connect_wifi", HTTP_POST, handle_connect_wifi);
@@ -88,17 +81,40 @@ void setup() {
   server.onNotFound(handle_notfound);
 
   //Current Measurement Setup
-  curr.current(A0, 4.8);
+  curr.current(curr_inp, curr_calib);
 
+  // Time Keeping Begins
   time_object.begin();
 }
 //
 
 //Main Loop
 void loop() {
-  server.handleClient();            //Handle Incoming HTTP requests from Clients
-  
-  double curr_raw;
+  if(::wflag == 0)
+  {
+    WiFi.begin();
+    Serial.print("\nConnecting to Last Known Network");
+    while(WiFi.status() != WL_CONNECTED && ::wflag < conn_wp)
+    {
+      Serial.print(".");
+      delay(1000);
+      ::wflag++;
+    }
+    if(::wflag == conn_wp)
+    {
+      Serial.print("\nError : Couldnt Connect to Network");
+      delay(1000);
+    }
+    else
+    {
+      Serial.print("\nConnection Successful to: ");
+      Serial.print(WiFi.SSID());
+      Serial.print("\nIP Address: ");
+      Serial.print(WiFi.localIP());
+      time_object.update(); 
+    }
+  }
+    
   if(WiFi.status() == WL_CONNECTED) //WiFi connection LED Indication
   {
     digitalWrite(D4, LOW);
@@ -106,21 +122,30 @@ void loop() {
       time_object.update();
   }
   else
+  {
     digitalWrite(D4, HIGH);
-  if(time_object.getSeconds() % 10 == 0 && cflag == 0)
+  }
+  
+  server.handleClient();            //Handle Incoming HTTP requests from Clients
+
+  if(time_object.getSeconds() % 10 == 0 && pflag == 0)
   {  
     curr_raw = analogRead(A0);
     curr_raw = curr.calcIrms(1480);
+    power = voltage*curr_raw;
     Serial.println();
     Serial.print(time_object.getFormattedTime());
     Serial.println();
     Serial.print(curr_raw);
+    Serial.print("A\n");
+    Serial.print(power);
+    Serial.print("W");
     Serial.print("\nNo. of Station Connected to AP: ");
     Serial.print(WiFi.softAPgetStationNum());
-    cflag = 1;
+    pflag = 1;
   }
   else if(time_object.getSeconds() % 10 != 0)
-    cflag = 0;
+    pflag = 0;
 }
 //
 
@@ -226,25 +251,38 @@ void sta_setup(char *s, char* p)
   *  Uses the HTML Server through the Soft Access Point to get WiFi network creds from 
   *  user and setup the STA Mode Connection
   */
+ // WiFi.disconnect(true);
+ // delay(5000);
   WiFi.begin(s, p);
   Serial.println("\nConnecting via STA mode");
   while(WiFi.status() != WL_CONNECTED)
   {
-    delay(500);
+    delay(1000);
     Serial.print(".");
     sflag++;
-    if(sflag > 40)
+    if(sflag > conn_wp)
       break;
   }
-  if(sflag < 40)
+  if(sflag < conn_wp)
   {
     digitalWrite(D4, LOW);
     Serial.print("\nConnection Established! IP: ");
     Serial.print(WiFi.localIP());
+    time_object.update();
   }
   else
     Serial.print("\nConnection couldn't be Established");
   sflag = 0;
 }
 
+void begin_ap()
+{
+  WiFi.softAPConfig(softAP_ip, softAP_gateway, softAP_subnet);
+  ret = WiFi.softAP(softSSID, softPASS);
+  if (ret == true)
+  {
+    Serial.print("\nSoft Access Point Started with IP: ");
+    Serial.print(WiFi.softAPIP());
+  }
+}
 //
