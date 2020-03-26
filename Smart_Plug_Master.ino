@@ -6,13 +6,23 @@
 #include "servertext.h"             // HTML for the Web Server
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>       
-#include <EmonLibUser.h>            // EmonLib with Bias Value Customised to calibrate with hardware.
+#include <EmonLib.h>
 #include <NTPClient.h>
 #include <WiFiUDP.h>
+#include <Adafruit_MQTT.h>
+#include <Adafruit_MQTT_Client.h>
 //
 
 //Constants Declarations
+#define aio_server      "io.adafruit.com"
+#define aio_serverport  1883
+#define aio_username    "Archit149"
+#define aio_key         " /*Not Written for Privacy*/ 
+#define power_feed      "Archit149/feeds/energymonitor.power"
+#define timestamp_feed  "Archit149/feeds/energymonitor.timestamp"
+
 #define ind_led D4                         //LED for Physical Indication of Device
+#define pub_led D0                         //LED for Publish Success Indication
 #define curr_inp A0                        //Analog Pin for Current Measurement
 #define conn_wp 20                         //Wait Period for WiFi Connection in seconds
 #define voltage 230                        //Assumed Constant Voltage
@@ -28,13 +38,19 @@ bool ret;                                  //For Various Connection Result Retur
 bool time_synced = false;                  //Keeps Track of Whether Time is Set Correctly or not
 const long int offset = 19800;             //+05:30 GMT
 const long int auto_update_int = 85600;    //AutoSync from NTP Server Everyday
-
+uint32_t timestamp;
 double curr_raw;
 double power;
 float curr_calib = 4.8;
 //
 
 //Class Object Declarations
+WiFiClient client;
+
+Adafruit_MQTT_Client mqtt_object(&client, aio_server, aio_serverport, aio_username, aio_key);
+Adafruit_MQTT_Publish power_object(&mqtt_object, power_feed);
+Adafruit_MQTT_Publish timestamp_object(&mqtt_object, timestamp_feed);
+
 ESP8266WebServer server(80);
 
 EnergyMonitor curr;
@@ -53,16 +69,19 @@ void handle_wifi_login();
 void sta_setup(char*, char*);
 void begin_ap();
 //void close_ap();
+void mqtt_connect();
 //
 
 //Setup
-void setup() {
-
+void setup() 
+{
   //Pin Setup
   pinMode(ind_led, OUTPUT);      //LED Indication for WiFi Connection
+  pinMode(pub_led, OUTPUT);      //LED Indication for MQTT Publish
   digitalWrite(ind_led, HIGH);   //WiFi Not Connected
+  digitalWrite(pub_led, HIGH);   //Not Publishing 
   pinMode(curr_inp, INPUT);      //Current Measurement
-
+  
   // Begin Serial Communication with Arduino IDE
   Serial.begin(115200);
   Serial.print("\nSuccesfully began Serial Communication With NodeMCU\n");
@@ -118,6 +137,7 @@ void loop() {
       ret ? Serial.print("\nTime Sync Successful") :  Serial.print("\nWarning : Time Sync Failed");
       ret ? ::time_synced = true : ::time_synced = false;
     }
+    mqtt_connect();
   }
     
   if(WiFi.status() == WL_CONNECTED) //WiFi connection LED Indication
@@ -142,24 +162,29 @@ void loop() {
     //Print Config Data Every 300 sec
     if(time_object.getMinutes() % 5 == 0 && time_object.getSeconds() == 0)
     {
+      mqtt_object.ping();
       Serial.print("\n\nConfig Data :");
       Serial.print("\nWiFi Connected : ");
       if(WiFi.status() == WL_CONNECTED) 
       {
-        Serial.print("YES"); 
+        Serial.print("Yes"); 
         Serial.print("\nSSID : ");
         Serial.print(WiFi.SSID());
         Serial.print("\nIP : ");
         Serial.print(WiFi.localIP());
       }
       else
-        Serial.print("NO");
+        Serial.print("No");
       
       Serial.print("\nStations Connected to AP: ");
       Serial.print(WiFi.softAPgetStationNum());
+      Serial.print("\nTime Synced : ");
+      ::time_synced ? Serial.print("Yes") : Serial.print("No");
+      Serial.print("\nMQTT Connection : ");
+      mqtt_object.connected() ? Serial.print("Alive") : Serial.print("Dead");  
     }
     
-    curr_raw = curr.calcIrms(400);
+    curr_raw = curr.calcIrms(1480);
     power = voltage*curr_raw;
     Serial.print("\n\nEnergy Data : ");
     Serial.print("\nTimeStamp : ");
@@ -168,6 +193,36 @@ void loop() {
     Serial.print(curr_raw);
     Serial.print("\nPower (W) : ");
     Serial.print(power);
+    Serial.println();
+    if(mqtt_object.connected())
+    {
+      bool res, res2;
+      res = power_object.publish(power, 6);
+      res2 = timestamp_object.publish((uint32_t)time_object.getEpochTime());
+      if(res)
+      {
+        digitalWrite(pub_led, LOW);
+        delay(200);
+        digitalWrite(pub_led, HIGH);
+        delay(200);
+      }
+      if(res2)
+      {
+        digitalWrite(pub_led, LOW);
+        delay(200);
+        digitalWrite(pub_led, HIGH);
+        delay(200);
+        digitalWrite(pub_led, LOW);
+        delay(200);
+        digitalWrite(pub_led, HIGH);
+        delay(200);
+      }
+    }
+    else
+    {
+      Serial.print("\nMQTT Connection Lost.. Reconnecting");
+      mqtt_connect();
+    }
     pflag = 1;
   }
   else if(time_object.getSeconds() % 10 != 0)
@@ -278,8 +333,6 @@ void sta_setup(char *s, char* p)
   *  Uses the HTML Server through the Soft Access Point to get WiFi network creds from 
   *  user and setup the STA Mode Connection
   */
- // WiFi.disconnect(true);
- // delay(5000);
   WiFi.begin(s, p);
   Serial.println("\nConnecting via STA mode");
   while(WiFi.status() != WL_CONNECTED)
@@ -300,6 +353,7 @@ void sta_setup(char *s, char* p)
       ret = time_object.update();
       ret ? ::time_synced = true : ::time_synced = false;
     }
+    mqtt_connect();
   }
   else
     Serial.print("\nConnection couldn't be Established");
@@ -315,5 +369,29 @@ void begin_ap()
     Serial.print("\nSoft Access Point Started with IP: ");
     Serial.print(WiFi.softAPIP());
   }
+}
+
+void mqtt_connect()
+{
+  int r = 1;
+  if(mqtt_object.connected())
+    return;
+  if(WiFi.status() != WL_CONNECTED)
+    r = -2;
+  Serial.print("\nAdafruit MQTT");
+  while((ret = mqtt_object.connect()) != 0 && r != -2)
+  {
+    Serial.println();
+    Serial.print(mqtt_object.connectErrorString(ret));
+    Serial.print("\nRetrying MQTT connection in 1 second...");
+    mqtt_object.disconnect();
+    delay(1000);
+    r--;
+    if( r < 0 )
+      break;
+    else
+      continue;
+  }
+  r >= 0 ? Serial.print("\nMQTT Connected"): Serial.print("\nWarning : Cannot Connect to MQTT Service, data would not be published");
 }
 //
