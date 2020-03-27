@@ -6,7 +6,7 @@
 #include "servertext.h"             // HTML for the Web Server
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>       
-#include <EmonLib.h>
+#include <EmonLib.h>            // EmonLib with Bias Value Customised to calibrate with hardware.
 #include <NTPClient.h>
 #include <WiFiUDP.h>
 #include <Adafruit_MQTT.h>
@@ -17,15 +17,17 @@
 #define aio_server      "io.adafruit.com"
 #define aio_serverport  1883
 #define aio_username    "Archit149"
-#define aio_key         " /*Not Written for Privacy*/ 
+#define aio_key         "/*Ommitted for Privacy*/"
 #define power_feed      "Archit149/feeds/energymonitor.power"
-#define timestamp_feed  "Archit149/feeds/energymonitor.timestamp"
+#define po_ts_feed      "Archit149/feeds/energymonitor.po-ts"
 
 #define ind_led D4                         //LED for Physical Indication of Device
 #define pub_led D0                         //LED for Publish Success Indication
 #define curr_inp A0                        //Analog Pin for Current Measurement
 #define conn_wp 20                         //Wait Period for WiFi Connection in seconds
 #define voltage 230                        //Assumed Constant Voltage
+#define spie 15                            //Serial Print Interval for Energy Values 
+#define spic 300                           //Serial Print Interval for Config Values
 const char *softSSID = "smartswitch";      //Credentials for Master Access Point
 const char *softPASS = "smartswitch";      //For the function to work, the password should be more than 8 chars and should begin with a char too
 IPAddress softAP_ip(192,168,5,1);
@@ -38,9 +40,11 @@ bool ret;                                  //For Various Connection Result Retur
 bool time_synced = false;                  //Keeps Track of Whether Time is Set Correctly or not
 const long int offset = 19800;             //+05:30 GMT
 const long int auto_update_int = 85600;    //AutoSync from NTP Server Everyday
-uint32_t timestamp;
+
+long int timestamp;
 double curr_raw;
 double power;
+char po_ts[20];                            //Contains Combined value of Power and TimeStamp
 float curr_calib = 4.8;
 //
 
@@ -49,7 +53,7 @@ WiFiClient client;
 
 Adafruit_MQTT_Client mqtt_object(&client, aio_server, aio_serverport, aio_username, aio_key);
 Adafruit_MQTT_Publish power_object(&mqtt_object, power_feed);
-Adafruit_MQTT_Publish timestamp_object(&mqtt_object, timestamp_feed);
+Adafruit_MQTT_Publish po_ts_object(&mqtt_object, po_ts_feed);
 
 ESP8266WebServer server(80);
 
@@ -106,6 +110,10 @@ void setup()
 
   // Time Keeping Begins
   time_object.begin();
+
+  po_ts[20] = '\0';
+  po_ts[15] = '.';
+  po_ts[10] = ',';
 }
 //
 
@@ -143,24 +151,22 @@ void loop() {
   if(WiFi.status() == WL_CONNECTED) //WiFi connection LED Indication
   {
     digitalWrite(D4, LOW);
-    if(time_object.getSeconds() == 0)
+    if(time_object.getEpochTime() % spic == 0)
     {
       ret = time_object.update();
       !::time_synced && ret ? ::time_synced = true : ret ;   //Set Flag to true if previously false
     }
   }
   else
-  {
     digitalWrite(D4, HIGH);
-  }
   
   server.handleClient();            //Handle Incoming HTTP requests from Clients
 
-  //Serial Print Energy and Time Data Every 10 sec
-  if(time_object.getSeconds() % 10 == 0 && pflag == 0)
+  //Serial Print and Publish Energy and Time Data Every spie seconds 
+  if(time_object.getSeconds() % spie == 0 && pflag == 0)
   { 
-    //Print Config Data Every 300 sec
-    if(time_object.getMinutes() % 5 == 0 && time_object.getSeconds() == 0)
+    //Print Config Data Every spic seconds
+    if(time_object.getEpochTime() % spic == 0)
     {
       mqtt_object.ping();
       Serial.print("\n\nConfig Data :");
@@ -186,19 +192,39 @@ void loop() {
     
     curr_raw = curr.calcIrms(1480);
     power = voltage*curr_raw;
+    timestamp = time_object.getEpochTime();
+    
+    int i, p, t;
+    t = timestamp;
+    for(i = 9; i >= 0; i--)
+    {
+      po_ts[i] = t % 10 + 48;
+      t = t - t % 10;
+      t /= 10;
+    }
+    for(i = 3; i > -5; i--)
+    {
+      p = power / pow(10, i);
+      p = p % 10;
+      if (i >= 0)
+        po_ts[-i+14] = p + 48;
+      else
+        po_ts[-i+15] = p + 48;
+    }
+    
     Serial.print("\n\nEnergy Data : ");
     Serial.print("\nTimeStamp : ");
-    Serial.print(time_object.getEpochTime());
+    Serial.print(timestamp);
     Serial.print("\nCurrent(A) : ");
     Serial.print(curr_raw);
     Serial.print("\nPower (W) : ");
     Serial.print(power);
     Serial.println();
-    if(mqtt_object.connected())
+    if(mqtt_object.connected() && time_synced)
     {
       bool res, res2;
-      res = power_object.publish(power, 6);
-      res2 = timestamp_object.publish((uint32_t)time_object.getEpochTime());
+      res = power_object.publish(power, 4);
+      res2 = po_ts_object.publish(po_ts);
       if(res)
       {
         digitalWrite(pub_led, LOW);
@@ -220,12 +246,15 @@ void loop() {
     }
     else
     {
-      Serial.print("\nMQTT Connection Lost.. Reconnecting");
-      mqtt_connect();
+      if(time_synced)
+      {
+        Serial.print("\nMQTT Connection Lost.. Reconnecting");
+        mqtt_connect();
+      }
     }
     pflag = 1;
   }
-  else if(time_object.getSeconds() % 10 != 0)
+  else if(time_object.getSeconds() % spie != 0)
     pflag = 0;
 }
 //
@@ -382,10 +411,10 @@ void mqtt_connect()
   while((ret = mqtt_object.connect()) != 0 && r != -2)
   {
     Serial.println();
-    Serial.print(mqtt_object.connectErrorString(ret));
     Serial.print("\nRetrying MQTT connection in 1 second...");
+    delay(750);
     mqtt_object.disconnect();
-    delay(1000);
+    delay(750);
     r--;
     if( r < 0 )
       break;
