@@ -26,6 +26,7 @@
 #define curr_inp A0                        //Analog Pin for Current Measurement
 #define conn_wp 20                         //Wait Period for WiFi Connection in seconds
 #define voltage 230                        //Assumed Constant Voltage
+#define curr_calib 5                      //Current Calibration Factor
 #define spie 15                            //Serial Print Interval for Energy Values 
 #define spic 300                           //Serial Print Interval for Config Values
 const char *softSSID = "smartswitch";      //Credentials for Master Access Point
@@ -45,7 +46,6 @@ long int timestamp;
 double curr_raw;
 double power;
 char po_ts[20];                            //Contains Combined value of Power and TimeStamp
-float curr_calib = 4.8;
 //
 
 //Class Object Declarations
