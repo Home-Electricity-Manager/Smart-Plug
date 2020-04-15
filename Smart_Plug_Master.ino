@@ -17,18 +17,17 @@
 #define aio_server      "io.adafruit.com"
 #define aio_serverport  1883
 #define aio_username    "Archit149"
-#define aio_key         "/*Ommitted for Privacy*/"
-#define power_feed      "Archit149/feeds/energymonitor.power"
-#define po_ts_feed      "Archit149/feeds/energymonitor.po-ts"
+#define aio_key         "/*Ommitted For Privacy*/"
+#define po_ts_feed      "Archit149/feeds/energymonitor.tv-po-ts"
 
 #define ind_led D4                         //LED for Physical Indication of Device
 #define pub_led D0                         //LED for Publish Success Indication
 #define curr_inp A0                        //Analog Pin for Current Measurement
 #define conn_wp 20                         //Wait Period for WiFi Connection in seconds
 #define voltage 230                        //Assumed Constant Voltage
-#define curr_calib 5                      //Current Calibration Factor
-#define spie 15                            //Serial Print Interval for Energy Values 
-#define spic 300                           //Serial Print Interval for Config Values
+#define curr_calib 5                       //Current Calibration Factor
+#define spie 30                            //Serial Print and Cloud Publish Interval for Energy Values 
+#define spic 300                           //Serial Print and Time Force Update Interval for Config Values
 const char *softSSID = "smartswitch";      //Credentials for Master Access Point
 const char *softPASS = "smartswitch";      //For the function to work, the password should be more than 8 chars and should begin with a char too
 IPAddress softAP_ip(192,168,5,1);
@@ -52,7 +51,6 @@ char po_ts[20];                            //Contains Combined value of Power an
 WiFiClient client;
 
 Adafruit_MQTT_Client mqtt_object(&client, aio_server, aio_serverport, aio_username, aio_key);
-Adafruit_MQTT_Publish power_object(&mqtt_object, power_feed);
 Adafruit_MQTT_Publish po_ts_object(&mqtt_object, po_ts_feed);
 
 ESP8266WebServer server(80);
@@ -72,7 +70,6 @@ void handle_wifi_login();
 
 void sta_setup(char*, char*);
 void begin_ap();
-//void close_ap();
 void mqtt_connect();
 //
 
@@ -222,22 +219,10 @@ void loop() {
     Serial.println();
     if(mqtt_object.connected() && time_synced)
     {
-      bool res, res2;
-      res = power_object.publish(power, 4);
-      res2 = po_ts_object.publish(po_ts);
+      bool res;
+      res = po_ts_object.publish(po_ts);
       if(res)
       {
-        digitalWrite(pub_led, LOW);
-        delay(200);
-        digitalWrite(pub_led, HIGH);
-        delay(200);
-      }
-      if(res2)
-      {
-        digitalWrite(pub_led, LOW);
-        delay(200);
-        digitalWrite(pub_led, HIGH);
-        delay(200);
         digitalWrite(pub_led, LOW);
         delay(200);
         digitalWrite(pub_led, HIGH);
