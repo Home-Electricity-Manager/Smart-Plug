@@ -6,7 +6,7 @@
 #include "servertext.h"             // HTML for the Web Server
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>       
-#include <EmonLib.h>            // EmonLib with Bias Value Customised to calibrate with hardware.
+#include <EmonLib.h>
 #include <NTPClient.h>
 #include <WiFiUDP.h>
 #include <Adafruit_MQTT.h>
@@ -17,8 +17,9 @@
 #define aio_server      "io.adafruit.com"
 #define aio_serverport  1883
 #define aio_username    "Archit149"
-#define aio_key         "/*Ommitted For Privacy*/"
+#define aio_key         "2619ba57dee340489754ca6dac5de74b"
 #define po_ts_feed      "Archit149/feeds/energymonitor.tv-po-ts"
+#define subs_feed       "Archit149/feeds/energymonitor.schedule"
 
 #define ind_led D4                         //LED for Physical Indication of Device
 #define pub_led D0                         //LED for Publish Success Indication
@@ -33,9 +34,9 @@ const char *softPASS = "smartswitch";      //For the function to work, the passw
 IPAddress softAP_ip(192,168,5,1);
 IPAddress softAP_gateway(192,168,5,1);     //IP config for the soft Access Point
 IPAddress softAP_subnet(255,255,255,0);
-int sflag = 0;
-int pflag = 0;                             //Flags used for System Operations
-int wflag = 0;
+            //Flags used for System Operations
+int sflag = 0;                             //sflag: used in setup for WiFi Connection Time Out and later in HTTPS Server Functions to check for connection success
+int pflag = 0;                             //pflag: used to make sure power measurement is run one time only and based on current time (timestamp)
 bool ret;                                  //For Various Connection Result Return Values 
 bool time_synced = false;                  //Keeps Track of Whether Time is Set Correctly or not
 const long int offset = 19800;             //+05:30 GMT
@@ -111,40 +112,41 @@ void setup()
   po_ts[20] = '\0';
   po_ts[15] = '.';
   po_ts[10] = ',';
+
+  WiFi.begin();
+  Serial.print("\nConnecting to Last Known Network");
+  while(WiFi.status() != WL_CONNECTED && ::sflag < conn_wp)
+  {
+    Serial.print(".");
+    delay(1000);
+    ::sflag++;
+  }
+  if(sflag == conn_wp)
+  {
+    Serial.print("\nWarning : Couldnt Connect to Network");
+    WiFi.disconnect();
+    delay(1000);
+  }
+  else
+  {
+    Serial.print("\nConnection Successful to: ");
+    Serial.print(WiFi.SSID());
+    Serial.print("\nIP Address: ");
+    Serial.print(WiFi.localIP());
+    ret = time_object.update();
+    ret ? Serial.print("\nTime Sync Successful") :  Serial.print("\nWarning : Time Sync Failed");
+    ret ? ::time_synced = true : ::time_synced = false;
+  }
+  ::sflag = 0;
+  mqtt_connect();
 }
 //
 
 //Main Loop
 void loop() {
-  
-  if(::wflag == 0)
-  {
-    WiFi.begin();
-    Serial.print("\nConnecting to Last Known Network");
-    while(WiFi.status() != WL_CONNECTED && ::wflag < conn_wp)
-    {
-      Serial.print(".");
-      delay(1000);
-      ::wflag++;
-    }
-    if(::wflag == conn_wp)
-    {
-      Serial.print("\nWarning : Couldnt Connect to Network");
-      delay(1000);
-    }
-    else
-    {
-      Serial.print("\nConnection Successful to: ");
-      Serial.print(WiFi.SSID());
-      Serial.print("\nIP Address: ");
-      Serial.print(WiFi.localIP());
-      ret = time_object.update();
-      ret ? Serial.print("\nTime Sync Successful") :  Serial.print("\nWarning : Time Sync Failed");
-      ret ? ::time_synced = true : ::time_synced = false;
-    }
-    mqtt_connect();
-  }
-    
+      
+  server.handleClient();            //Handle Incoming HTTP requests from Clients
+
   if(WiFi.status() == WL_CONNECTED) //WiFi connection LED Indication
   {
     digitalWrite(D4, LOW);
@@ -156,8 +158,6 @@ void loop() {
   }
   else
     digitalWrite(D4, HIGH);
-  
-  server.handleClient();            //Handle Incoming HTTP requests from Clients
 
   //Serial Print and Publish Energy and Time Data Every spie seconds 
   if(time_object.getSeconds() % spie == 0 && pflag == 0)
@@ -208,6 +208,7 @@ void loop() {
       else
         po_ts[-i+15] = p + 48;
     }
+    po_ts[20] = '\0';
     
     Serial.print("\n\nEnergy Data : ");
     Serial.print("\nTimeStamp : ");
