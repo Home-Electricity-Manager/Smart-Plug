@@ -47,7 +47,7 @@ const long int auto_update_int = 85600;     //AutoSync from NTP Server Everyday
 long int timestamp;
 double curr_raw;
 double power;
-char po_ts[100];                             //Contains Combined value of Power and TimeStamp
+char po_ts[20];                             //Contains Combined value of Power and TimeStamp
 char* packet;                               //Packet Received from Subscription
 bool sch_status = false;                    //Preset the appliance to stay off
 unsigned long current_millis;               //For Millis Implementation
@@ -80,9 +80,9 @@ void handle_wifi_login();
 int append_value_to_po_ts(double, bool, char*, int);
 
 void sta_setup(char*, char*);
+void mqtt_connect();
 bool begin_ap();
 bool close_ap();
-void mqtt_connect();
 //
 
 //Setup
