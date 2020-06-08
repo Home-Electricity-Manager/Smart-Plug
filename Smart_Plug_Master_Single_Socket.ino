@@ -1,5 +1,5 @@
 /*
- * Code for the Energy Boosters' Teams Master Smart Plug on the NodeMCU 0.9 Module
+ * Code for the Energy Boosters' Teams Master Smart Plug Single Socket on the NodeMCU 0.9 Module
 */
 
 //Include Required Libraries
