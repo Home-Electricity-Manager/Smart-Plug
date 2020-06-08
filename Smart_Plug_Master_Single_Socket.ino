@@ -1,12 +1,12 @@
 /*
- * Code for the Energy Boosters' Teams Master Smart Plug Single Socket on the NodeMCU 0.9 Module
+ * Code for the Energy Boosters' Teams Smart Plug Single Socket on the NodeMCU 0.9 Module
 */
 
 //Include Required Libraries
 #include "servertext.h"             // HTML for the Web Server
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>       
-#include <EmonLib.h>
+#include <EmonLib.h>                //Open Source Energy monitor Library
 #include <NTPClient.h>
 #include <WiFiUDP.h>
 #include <Adafruit_MQTT.h>
@@ -15,44 +15,52 @@
 
 //Constants Declarations
 #define aio_server      "io.adafruit.com"
-#define aio_serverport  1883
-#define aio_username    "Archit149"
-#define aio_key         "2619ba57dee340489754ca6dac5de74b"
-#define po_ts_feed      "Archit149/feeds/energymonitor.tv-po-ts"
-#define subs_feed       "Archit149/feeds/energymonitor.schedule"
+#define aio_serverport  0000 //Ommited
+#define aio_username    "//Ommited"
+#define aio_key         "//Ommited"
+#define po_ts_feed      "//Ommited"
+#define subs_feed       "//Ommited"
 
-#define ind_led D4                         //LED for Physical Indication of Device
-#define pub_led D0                         //LED for Publish Success Indication
-#define curr_inp A0                        //Analog Pin for Current Measurement
-#define conn_wp 20                         //Wait Period for WiFi Connection in seconds
-#define voltage 230                        //Assumed Constant Voltage
-#define curr_calib 5                       //Current Calibration Factor
-#define spie 30                            //Serial Print and Cloud Publish Interval for Energy Values 
-#define spic 300                           //Serial Print and Time Force Update Interval for Config Values
-const char *softSSID = "smartswitch";      //Credentials for Master Access Point
-const char *softPASS = "smartswitch";      //For the function to work, the password should be more than 8 chars and should begin with a char too
+#define ind_led D4                          //LED for Physical Indication of Device
+#define mqtt_pub_led D4                     //LED for Publish Success Indication
+#define ap_control_pin D8                   //For Externaly Controlling AP Enable Disable
+#define curr_inp A0                         //Analog Pin for Current Measurement
+#define conn_wp 20                          //Wait Period for WiFi Connection in seconds
+#define voltage 230                         //Assumed Constant Voltage
+#define curr_calib 5                        //Current Calibration Factor
+#define spie 30                             //Serial Print and Cloud Publish Interval for Energy Values 
+#define spic 300                            //Serial Print and Time Force Update Interval for Config Values
+#define millis_delay_interval 1000          //Default Interval Variable used for millis delay in milliseconds
+const char *softSSID = "smartswitch";       //Credentials for Master Access Point
+const char *softPASS = "smartswitch";       //For the function to work, the password should be more than 8 chars and should begin with a char too
 IPAddress softAP_ip(192,168,5,1);
-IPAddress softAP_gateway(192,168,5,1);     //IP config for the soft Access Point
+IPAddress softAP_gateway(192,168,5,1);      //IP config for the soft Access Point
 IPAddress softAP_subnet(255,255,255,0);
-            //Flags used for System Operations
-int sflag = 0;                             //sflag: used in setup for WiFi Connection Time Out and later in HTTPS Server Functions to check for connection success
-int pflag = 0;                             //pflag: used to make sure power measurement is run one time only and based on current time (timestamp)
-bool ret;                                  //For Various Connection Result Return Values 
-bool time_synced = false;                  //Keeps Track of Whether Time is Set Correctly or not
-const long int offset = 19800;             //+05:30 GMT
-const long int auto_update_int = 85600;    //AutoSync from NTP Server Everyday
+int sflag = 0;                              //sflag: flag used in setup for WiFi Connection Time Out and later in HTTPS Server Functions to check for connection success
+int pflag = 0;                              //pflag: flag used to make sure power measurement is run one time only and based on current time (timestamp)
+bool ret;                                   //For Various Connection Result Return Values 
+bool time_synced = false;                   //Keeps Track of Whether Time is Set Correctly or not
+bool enable_ap = false;                     //To Enable AP for WiFi Configuration
+const long int offset = 19800;              //+05:30 GMT
+const long int auto_update_int = 85600;     //AutoSync from NTP Server Everyday
 
 long int timestamp;
 double curr_raw;
 double power;
-char po_ts[20];                            //Contains Combined value of Power and TimeStamp
+char po_ts[20];                             //Contains Combined value of Power and TimeStamp
+char* packet;                               //Packet Received from Subscription
+bool sch_status = false;                    //Preset the appliance to stay off
+unsigned long current_millis;               //For Millis Implementation
+unsigned long last_millis = 0;
 //
 
 //Class Object Declarations
 WiFiClient client;
 
-Adafruit_MQTT_Client mqtt_object(&client, aio_server, aio_serverport, aio_username, aio_key);
-Adafruit_MQTT_Publish po_ts_object(&mqtt_object, po_ts_feed);
+Adafruit_MQTT_Client mqtt_client_object(&client, aio_server, aio_serverport, aio_username, aio_key);
+
+Adafruit_MQTT_Publish po_ts_object(&mqtt_client_object, po_ts_feed);
+Adafruit_MQTT_Subscribe subscribe_object = Adafruit_MQTT_Subscribe(&mqtt_client_object, subs_feed);
 
 ESP8266WebServer server(80);
 
@@ -69,30 +77,31 @@ void handle_disconnect_wifi();
 void handle_connect_wifi();
 void handle_wifi_login();
 
+int append_value_to_po_ts(double, bool, char*, int);
+
 void sta_setup(char*, char*);
-void begin_ap();
 void mqtt_connect();
+bool begin_ap();
+bool close_ap();
 //
 
 //Setup
 void setup() 
 {
   //Pin Setup
-  pinMode(ind_led, OUTPUT);      //LED Indication for WiFi Connection
-  pinMode(pub_led, OUTPUT);      //LED Indication for MQTT Publish
-  digitalWrite(ind_led, HIGH);   //WiFi Not Connected
-  digitalWrite(pub_led, HIGH);   //Not Publishing 
-  pinMode(curr_inp, INPUT);      //Current Measurement
+  pinMode(ind_led, OUTPUT);           //LED Indication for WiFi Connection
+  pinMode(curr_inp, INPUT);           //Current Measurement
+  pinMode(ap_control_pin, INPUT);     //Controlling AP Externally
+  digitalWrite(ind_led, HIGH);        //WiFi Not Connected and MQTT not publishing
   
   // Begin Serial Communication with Arduino IDE
   Serial.begin(115200);
   Serial.print("\nSuccesfully began Serial Communication With NodeMCU\n");
-
   //Begin WiFi Mode
   WiFi.mode(WIFI_AP_STA);   //Declares the WiFi Mode as Station plus Access Point
 
   //WiFi Access Point Mode Moved to an External function declared as begin_ap();
-  begin_ap();
+//  enable_ap ? begin_ap() : true ;
   
   //HTML Server and Handles
   server.begin();
@@ -109,22 +118,20 @@ void setup()
   // Time Keeping Begins
   time_object.begin();
 
-  po_ts[20] = '\0';
-  po_ts[15] = '.';
-  po_ts[10] = ',';
-
   WiFi.begin();
   Serial.print("\nConnecting to Last Known Network");
   while(WiFi.status() != WL_CONNECTED && ::sflag < conn_wp)
   {
     Serial.print(".");
-    delay(1000);
     ::sflag++;
+    delay(1000);
   }
-  if(sflag == conn_wp)
+  if(::sflag == conn_wp)
   {
     Serial.print("\nWarning : Couldnt Connect to Network");
     WiFi.disconnect();
+    begin_ap();
+    enable_ap = true;
     delay(1000);
   }
   else
@@ -133,12 +140,14 @@ void setup()
     Serial.print(WiFi.SSID());
     Serial.print("\nIP Address: ");
     Serial.print(WiFi.localIP());
+    close_ap();
     ret = time_object.update();
     ret ? Serial.print("\nTime Sync Successful") :  Serial.print("\nWarning : Time Sync Failed");
     ret ? ::time_synced = true : ::time_synced = false;
   }
   ::sflag = 0;
   mqtt_connect();
+  mqtt_client_object.subscribe(&subscribe_object);
 }
 //
 
@@ -159,13 +168,75 @@ void loop() {
   else
     digitalWrite(D4, HIGH);
 
+  //Access Point Control, Allows User to Press an External button to switch the Soft Access Point on or off.
+  int k = 0;    //Denotes Change to the enable_ap flag
+  if(digitalRead(ap_control_pin) == HIGH)
+  {
+    ::current_millis = millis();
+    if(::current_millis > ::last_millis + 3*millis_delay_interval)
+    {
+      enable_ap = !enable_ap;
+      ::last_millis = ::current_millis;
+      k = 1;    //enable_ap flag changed
+    }
+  }
+  if( k == 1 )
+  {
+    if(enable_ap)
+      begin_ap();
+    else
+      close_ap();
+  }
+  
   //Serial Print and Publish Energy and Time Data Every spie seconds 
   if(time_object.getSeconds() % spie == 0 && pflag == 0)
   { 
-    //Print Config Data Every spic seconds
+    int append_index = 0;
+    po_ts[append_index] = '\0';
+    
+    curr_raw = curr.calcIrms(1480);
+    power = voltage*curr_raw;
+    timestamp = time_object.getEpochTime();
+    
+    append_index = append_value_to_po_ts(timestamp, true, po_ts, append_index);
+    append_index = append_value_to_po_ts(power, false, po_ts, append_index);
+    Serial.print("\n");
+    Serial.print(po_ts);
+    
+    Serial.print("\n\nEnergy Data : ");
+    Serial.print("\nTimeStamp : ");
+    Serial.print(timestamp);
+    Serial.print("\nCurrent(A) : ");
+    Serial.print(curr_raw);
+    Serial.print("\nPower (W) : ");
+    Serial.print(power);
+    Serial.println();
+    if(mqtt_client_object.connected() && time_synced)
+    {
+      bool res;
+      res = po_ts_object.publish(po_ts);
+      if(res)
+      {
+        digitalWrite(mqtt_pub_led, HIGH);
+        delay(200);
+        digitalWrite(mqtt_pub_led, LOW);
+      }
+    }
+    else
+    {
+      if(time_synced)
+      {
+        Serial.print("\nMQTT Connection Lost.. Reconnecting");
+        mqtt_connect();
+      }
+    }
+    
+    //Print Config Data Every spic seconds,
+    //and Check for new subscription
+    //Do this after Power has been collected
     if(time_object.getEpochTime() % spic == 0)
     {
-      mqtt_object.ping();
+      mqtt_client_object.ping();
       Serial.print("\n\nConfig Data :");
       Serial.print("\nWiFi Connected : ");
       if(WiFi.status() == WL_CONNECTED) 
@@ -178,70 +249,35 @@ void loop() {
       }
       else
         Serial.print("No");
-      
-      Serial.print("\nStations Connected to AP: ");
-      Serial.print(WiFi.softAPgetStationNum());
+      if(enable_ap)
+      {
+        Serial.print("\nSoft AP: Active");
+        Serial.print("\nStations Connected to AP: ");
+        Serial.print(WiFi.softAPgetStationNum());
+      }
+      else
+        Serial.print("\nSoft AP: Inactive");
       Serial.print("\nTime Synced : ");
       ::time_synced ? Serial.print("Yes") : Serial.print("No");
       Serial.print("\nMQTT Connection : ");
-      mqtt_object.connected() ? Serial.print("Alive") : Serial.print("Dead");  
-    }
-    
-    curr_raw = curr.calcIrms(1480);
-    power = voltage*curr_raw;
-    timestamp = time_object.getEpochTime();
-    
-    int i, p, t;
-    t = timestamp;
-    for(i = 9; i >= 0; i--)
-    {
-      po_ts[i] = t % 10 + 48;
-      t = t - t % 10;
-      t /= 10;
-    }
-    for(i = 3; i > -5; i--)
-    {
-      p = power / pow(10, i);
-      p = p % 10;
-      if (i >= 0)
-        po_ts[-i+14] = p + 48;
-      else
-        po_ts[-i+15] = p + 48;
-    }
-    po_ts[20] = '\0';
-    
-    Serial.print("\n\nEnergy Data : ");
-    Serial.print("\nTimeStamp : ");
-    Serial.print(timestamp);
-    Serial.print("\nCurrent(A) : ");
-    Serial.print(curr_raw);
-    Serial.print("\nPower (W) : ");
-    Serial.print(power);
-    Serial.println();
-    if(mqtt_object.connected() && time_synced)
-    {
-      bool res;
-      res = po_ts_object.publish(po_ts);
-      if(res)
+      mqtt_client_object.connected() ? Serial.print("Alive") : Serial.print("Dead");  
+
+      //Read Subscription
+      Adafruit_MQTT_Subscribe *schedule;
+      schedule = mqtt_client_object.readSubscription(2000);
+      if (schedule == &subscribe_object)
       {
-        digitalWrite(pub_led, LOW);
-        delay(200);
-        digitalWrite(pub_led, HIGH);
-        delay(200);
+        packet = (char*)subscribe_object.lastread;
+        Serial.print(packet);
       }
-    }
-    else
-    {
-      if(time_synced)
-      {
-        Serial.print("\nMQTT Connection Lost.. Reconnecting");
-        mqtt_connect();
-      }
+      //End of Subscription Reading and Parsing
     }
     pflag = 1;
   }
   else if(time_object.getSeconds() % spie != 0)
     pflag = 0;
+
+  //digitalWrite(pin#, sch_status);
 }
 //
 
@@ -258,7 +294,7 @@ void handle_disconnect_wifi()
 {
   WiFi.disconnect();
   digitalWrite(D4,HIGH);
-  Serial.println("WiFi Disconnected\n");
+  Serial.print("\nWiFi Disconnected");
   server.sendHeader("Location", "/");
   server.send(303);
 }
@@ -341,6 +377,56 @@ void handle_notfound()
   server.send(303);
 }
 
+int append_value_to_po_ts(double val, bool timestamp, char* po, int end_index)
+{
+  // Appends the passed value in the right format to the passed Char Array (Passed as Pointer po)
+  if(timestamp)
+  {
+    long int t = val;
+    int ap, up, down;
+    
+    up = t / pow(10,5);
+    down = t - up * pow(10, 5);
+    
+    for(end_index = 0; end_index <= 9; end_index++)
+    {
+      ap = up / pow(10, 4);
+      po[end_index] = ap + 48;
+      
+      up *= 10;
+      up = up % 100000;
+      up += down / pow(10, 4);
+
+      down *= 10;
+      down = down % 100000;
+    }
+    po[end_index] = '\0';
+    return end_index;
+  }
+  else
+  {
+    // Append Power Value at the End
+    po[end_index] = ',';
+    po[end_index + 10] = '\0';
+    
+    Serial.print(po);
+    int p;
+    for(int i = 1; i <= 9; i++)
+    {
+      p = val / pow(10, 3);
+      p = p % 10;
+      if(i == 5)
+      {
+        po[end_index + i] = '.';
+        i++;
+      }
+      po[end_index + i] = p + 48;
+      val *= 10;
+    }
+    return end_index + 10;
+  }
+}
+
 void sta_setup(char *s, char* p)    
 {
   /* 
@@ -356,7 +442,7 @@ void sta_setup(char *s, char* p)
     Serial.print(".");
     sflag++;
     if(sflag > conn_wp)
-      break;
+        break;
   }
   if(sflag < conn_wp)
   {
@@ -375,7 +461,7 @@ void sta_setup(char *s, char* p)
   sflag = 0;
 }
 
-void begin_ap()
+bool begin_ap()
 {
   WiFi.softAPConfig(softAP_ip, softAP_gateway, softAP_subnet);
   ret = WiFi.softAP(softSSID, softPASS);
@@ -384,23 +470,34 @@ void begin_ap()
     Serial.print("\nSoft Access Point Started with IP: ");
     Serial.print(WiFi.softAPIP());
   }
+  return ret;
+}
+
+bool close_ap()
+{
+  ret = WiFi.softAPdisconnect(true);
+  if(ret)
+    Serial.print("\nAccess Point: Inactive");
+  else
+    Serial.print("\nCannot Close Access Point try again");
+  return ret;
 }
 
 void mqtt_connect()
 {
   int r = 1;
-  if(mqtt_object.connected())
+  if(mqtt_client_object.connected())
     return;
   if(WiFi.status() != WL_CONNECTED)
     r = -2;
   Serial.print("\nAdafruit MQTT");
-  while((ret = mqtt_object.connect()) != 0 && r != -2)
+  while((ret = mqtt_client_object.connect()) != 0 && r != -2)
   {
     Serial.println();
     Serial.print("\nRetrying MQTT connection in 1 second...");
-    delay(750);
-    mqtt_object.disconnect();
-    delay(750);
+    delay(500);
+    mqtt_client_object.disconnect();
+    delay(500);
     r--;
     if( r < 0 )
       break;
