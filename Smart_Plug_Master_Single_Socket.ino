@@ -1,6 +1,7 @@
 /*
  * Code for the Energy Boosters' Teams Smart Plug Single Socket on the NodeMCU 0.9 Module
  * Developed by Archit Jain
+ * Discontinued
 */
 
 //Include Required Libraries
