@@ -1,11 +1,16 @@
 /*
- * Code for the Energy Boosters' Teams Smart Plug Single Socket on the NodeMCU 0.9 Module
+ * Code for the Energy Boosters' Teams Smart Plug Multi Socket on the NodeMCU 0.9 Module
  * Developed by Archit Jain
- * Discontinued
+ * 
+ * Maximum Number of Possible Sockets for the ESP8266 (NodeMCU) is 8
+ * owing to a limited number of gpio pins on the dev board
+ * 
+ * The Code is Largely Independent of the Board Specifics other than
+ * the Wifi Library used and Pin Bindings
 */
 
 //Include Required Libraries
-#include "servertext.h"             // HTML for the Web Server
+#include "servertext.h"             //HTML for the Web Server
 #include <ESP8266WiFi.h>            //WiFI Control Library
 #include <ESP8266WebServer.h>       //WebServer for Network Connection
 #include <EmonLib.h>                //Open Source Energy monitor Library
@@ -19,35 +24,47 @@
 
 //MQTT Broker Values
 #define aio_server      "io.adafruit.com"
-#define aio_serverport  0000 //Ommitted
-#define aio_username    "//Ommitted"
-#define aio_key         "//Ommitted"
-#define po_ts_feed      "//Ommitted"
-#define subs_feed       "//Ommitted"
+#define aio_serverport  1883
+#define aio_username    "Archit149"
+#define aio_key         "2619ba57dee340489754ca6dac5de74b"
+#define po_ts_feed      "Archit149/feeds/energymonitor.test-po-ts"
+#define subs_feed       "Archit149/feeds/energymonitor.schedule"
+
+//NTP Server
+#define ntp_server          "time.nist.gov"     //NTP Server
 
 //Pin Bindings
 #define ind_led             D4                  //LED for Physical Indication of Device
 #define mqtt_pub_led        D4                  //LED for Publish Success Indication
 #define ap_control_pin      D8                  //For Externaly Controlling AP Enable Disable
-#define op_select           D0                  //For Relay Control
+#define op_select0          D0                  //Decoder
+#define op_select1          D1                  //For Relay Control to Decoder 
+#define op_select2          D2                  //Decoder
+#define ip_select0          D5                  //MUX
+#define ip_select1          D6                  //For MUX Control
+#define ip_select2          D7                  //MUX
 #define curr_inp            A0                  //Analog Pin for Current Measurement
 
 //Intervals and Value Constants
-#define conn_wp                     20          //Wait Period for WiFi Connection in seconds
-#define voltage                     230         //Assumed Constant Voltage
-#define curr_calib                  5           //Current Calibration Factor
-#define spie                        30          //Serial Print and Cloud Publish Interval for Energy Values 
-#define spic                        300         //Serial Print and Time Force Update Interval for Config Values
-#define millis_delay_interval       1000        //Default Interval Variable used for millis delay in milliseconds
-#define offset                      19800       //+05:30 GMT
-#define auto_update_int             85600       //AutoSync from NTP Server Everyday
-#define pub_str_size                20          //Length of the Publish String
+#define serial_baud_rate            115200                            //Serial Communication Baud Rate
+#define webserver_port              80                                //Port Number that the Server will Listen on
+#define sockets                     8                                 //Number of Appliances connected to the Node
+#define socket_pins                 int(ceil(log(sockets)/log(2)))    //Number of Pins required for socket selection
+#define pub_str_size                (sockets + 1)*10                  //Length of the Publish String
+#define conn_wp                     20                                //Wait Period for WiFi Connection in seconds
+#define voltage                     230                               //Assumed Constant Voltage
+#define curr_calib                  5                                 //Current Calibration Factor
+#define spie                        30                                //Serial Print and Cloud Publish Interval for Energy Values 
+#define spic                        300                               //Serial Print and Time Force Update Interval for Config Values
+#define default_delay_interval      1000                              //Default Interval Variable used for millis delay in milliseconds
+#define offset                      19800                             //+05:30 GMT
+#define auto_update_int             85600                             //AutoSync from NTP Server Everyday
 
 //Soft  Access Point
-const char *softSSID = "smartswitch";           //Credentials for Master Access Point
-const char *softPASS = "smartswitch";           //For the function to work, the password should be more than 8 chars and should begin with a char too
+const char *softSSID = "smartswitch";       //Credentials for Master Access Point
+const char *softPASS = "smartswitch";       //For the function to work, the password should be more than 8 chars and should begin with a char too
 IPAddress softAP_ip(192,168,5,1);
-IPAddress softAP_gateway(192,168,5,1);          //IP config for the soft Access Point
+IPAddress softAP_gateway(192,168,5,1);      //IP config for the soft Access Point
 IPAddress softAP_subnet(255,255,255,0);
 
 //Flags
@@ -77,14 +94,14 @@ Adafruit_MQTT_Publish po_ts_object(&mqtt_client_object, po_ts_feed);
 Adafruit_MQTT_Subscribe subscribe_object = Adafruit_MQTT_Subscribe(&mqtt_client_object, subs_feed);
 
 //Web Server Class Object, listens to requests on port 80 (HTTP)
-ESP8266WebServer server(80);
+ESP8266WebServer server(webserver_port);
 
 //Energy Meter Class Object for Current Measurement
 EnergyMonitor curr;
 
 //UDP Object and NTP Object for NTP Syncing
 WiFiUDP ntp_udp_client;
-NTPClient time_object(ntp_udp_client, "time.nist.gov", offset, auto_update_int);
+NTPClient time_object(ntp_udp_client, ntp_server, offset, auto_update_int);
 //
 
 //Function Prototypes
@@ -96,8 +113,9 @@ void handle_disconnect_wifi();
 void handle_connect_wifi();
 void handle_wifi_login();
 
-//String Append and Format Function
+//Data Acquisition and Control Functions
 int append_value_to_po_ts(double, bool, char*, int);
+void mux_select_write(int);
 
 //Network and Soft AP Connection Functions
 void sta_setup(char*, char*);
@@ -107,17 +125,23 @@ bool close_ap();
 //
 
 //Setup
-void setup() 
+void setup()
 {
   //Pin Setup
   pinMode(ind_led, OUTPUT);           //LED Indication for WiFi Connection and MQTT Publishing
   pinMode(curr_inp, INPUT);           //Current Measurement Pin
   pinMode(ap_control_pin, INPUT);     //Controlling AP Externally
-  digitalWrite(ind_led, HIGH);        //Initially WiFi Not Connected and MQTT not publishing
+  
+  pinMode(ip_select0, OUTPUT);
+  pinMode(ip_select1, OUTPUT);
+  pinMode(ip_select2, OUTPUT);
+  
+  digitalWrite(ind_led, HIGH);        //Initially WiFi Not Connected and MQTT not publishing  
   
   // Begin Serial Communication with Arduino IDE
-  Serial.begin(115200);
-  Serial.print("\nSuccesfully began Serial Communication With NodeMCU\n");
+  Serial.begin(serial_baud_rate);
+  Serial.printf("\nSuccesfully began Serial Communication With SoC at Baud %d", serial_baud_rate);
+  Serial.printf("\n#Appliance Sockets: %d", sockets);
   
   //Begin WiFi Setup
   WiFi.mode(WIFI_AP_STA);   //Declares the WiFi Mode as Station plus Access Point
@@ -126,7 +150,7 @@ void setup()
   
   //HTML Server and Handles
   server.begin();
-  Serial.print("\nStarting HTTPS WebServer");
+  Serial.printf("\nStarting HTTPS WebServer on port %d", webserver_port);
   server.on("/", HTTP_GET, handle_root);
   server.on("/disconnect_wifi", HTTP_POST, handle_disconnect_wifi);
   server.on("/connect_wifi", HTTP_POST, handle_connect_wifi);
@@ -147,17 +171,19 @@ void setup()
   {
     Serial.print(".");
     ::sflag++;
-    delay(1000);
+    delay(default_delay_interval);
   }
   if(::sflag == conn_wp)
-  //If sflag reaches TIMEOUT, Connection not made
-  //Stop connection, Open Soft AP and set enable_ap flag
+  /*
+   * If sflag reaches TIMEOUT, Connection not made
+   * Stop connection, Open Soft AP and set enable_ap flag 
+  */
   {
     Serial.print("\nWarning : Couldnt Connect to Network");
     WiFi.disconnect();
     begin_ap();
     enable_ap = true;
-    delay(1000);
+    delay(default_delay_interval);
   }
   else
   //If sflag not TIMED OUT, Connection Made
@@ -206,9 +232,11 @@ void loop() {
   //If Control Button Pressed? Acts as Daemon on Button Press only, not on enable_ap flag
   {
     ::current_millis = millis();
-    if(::current_millis > ::last_millis + 3*millis_delay_interval)  
-    //If Button pressed atleast after 3*millis_delay_interval enable change
-    //Prevents Burst Presses or Fluctuation Errors
+    if(::current_millis > ::last_millis + 3*default_delay_interval)  
+    /*
+     * If Button pressed atleast after 3*default_delay_interval enable change
+     * Prevents Burst Presses or Fluctuation Errors
+    */
     {
       enable_ap = !enable_ap;
       ::last_millis = ::current_millis;
@@ -226,28 +254,27 @@ void loop() {
     int append_index = 0;
     po_ts[append_index] = '\0';
 
-    //Measurement using Emonlib
-    curr_raw = curr.calcIrms(1480);
-    power = voltage*curr_raw;
     //Get Current timestamp
     timestamp = time_object.getEpochTime();
-
     //Append TimeStamp to Publish String
     append_index = append_value_to_po_ts(timestamp, true, po_ts, append_index);
-    //Append Power to Publish String
-    append_index = append_value_to_po_ts(power, false, po_ts, append_index);
-    Serial.print("\n");
-    Serial.print(po_ts);
 
-    //Serial Print Energy Data
+    //Serial Print Energy Data, TimeStamp
     Serial.print("\n\nEnergy Data : ");
-    Serial.print("\nTimeStamp : ");
-    Serial.print(timestamp);
-    Serial.print("\nCurrent(A) : ");
-    Serial.print(curr_raw);
-    Serial.print("\nPower (W) : ");
-    Serial.print(power);
-    Serial.println();
+    Serial.printf("\nTimeStamp : %l", timestamp);
+    
+    long int m = millis();
+    for(int i = 0; i < sockets; i++)
+    {
+      mux_select_write(i);
+      curr_raw = curr.calcIrms(1480);
+      power = voltage * curr_raw;
+      append_index = append_value_to_po_ts(power, false, po_ts, append_index);
+      Serial.printf("\nDevice %d : %f", i, power);
+    }
+    Serial.printf("\nMeasurement and Appending Time (ms): %d", millis() - m); 
+    Serial.print("\nPublish String:\n");
+    Serial.print(po_ts);
 
     //MQTT Connection and Time Sync Check
     if(mqtt_client_object.connected() && time_synced)
@@ -296,8 +323,7 @@ void loop() {
       if(enable_ap)
       {
         Serial.print("\nSoft AP: Active");
-        Serial.print("\nStations Connected to AP: ");
-        Serial.print(WiFi.softAPgetStationNum());
+        Serial.printf("\nStations Connected to AP: %d", WiFi.softAPgetStationNum());
       }
       else
         Serial.print("\nSoft AP: Inactive");
@@ -312,6 +338,7 @@ void loop() {
       if (schedule == &subscribe_object)
       {
         packet = (char*)subscribe_object.lastread;
+        Serial.print("\nPacket Received from Control Feed:\n");
         Serial.print(packet);
       }
       //End of Subscription Reading and Parsing
@@ -392,7 +419,7 @@ void handle_wifi_login()
       p[j+1] = '\0';
     }
     Serial.print("\nPass: ");
-    Serial.print(p);
+    //Serial.print(p);
     
     sta_setup(s, p);                  //Setup WiFi connection using the given credentials
     
@@ -428,8 +455,8 @@ void handle_notfound()
 }
 
 int append_value_to_po_ts(double val, bool timestamp, char* po, int end_index)
+// Appends the passed value in the right format to the passed Char Array (Passed as Pointer po)
 {
-  // Appends the passed value in the right format to the passed Char Array (Passed as Pointer po)
   if(timestamp)
   {
     long int t = val;
@@ -459,7 +486,6 @@ int append_value_to_po_ts(double val, bool timestamp, char* po, int end_index)
     po[end_index] = ',';
     po[end_index + 10] = '\0';
     
-    Serial.print(po);
     int p;
     for(int i = 1; i <= 9; i++)
     {
@@ -477,13 +503,31 @@ int append_value_to_po_ts(double val, bool timestamp, char* po, int end_index)
   }
 }
 
-void sta_setup(char *s, char* p)    
+void mux_select_write(int val)
+/*
+ * Writes the Select Pins to the Input Multiplexer
+ * Integer val is the index of the input to be selected
+*/
 {
-  /* 
+  if(val > sockets)
+  {
+    
+  }
+  int m = 0;
+  do
+  {
+    digitalWrite(ip_select0, HIGH);
+    m++;
+  }while(pow(2, m-1) <= val);
+}
+
+void sta_setup(char *s, char* p)    
+/* 
   *  For Setting up STA mode WiFi connections via user input.
   *  Uses the HTML Server through the Soft Access Point to get WiFi network creds from 
   *  user and setup the STA Mode Connection
-  */
+*/
+{
   WiFi.begin(s, p);
   Serial.println("\nConnecting via STA mode");
   while(WiFi.status() != WL_CONNECTED)
@@ -542,15 +586,15 @@ void mqtt_connect()
     return;
   if(WiFi.status() != WL_CONNECTED)   //Set flag if WiFi not connected
     r = -2;
-  Serial.print("\nAdafruit MQTT");
+  Serial.print("\nAdafruit MQTT Connecting");
   while((ret = mqtt_client_object.connect()) != 0 && r != -2)
   //if WiFi connected and MQTT Connection failed, retry in 1 second
   {
     Serial.println();
     Serial.print("\nRetrying MQTT connection in 1 second...");
-    delay(500);
+    delay(default_delay_interval/2);
     mqtt_client_object.disconnect();
-    delay(500);
+    delay(default_delay_interval/2);
     r--;    //Retry only once then exit from retry loop
     if( r < 0 )
       break;
