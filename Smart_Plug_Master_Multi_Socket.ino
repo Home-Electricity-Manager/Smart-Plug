@@ -6,7 +6,7 @@
  * owing to a limited number of gpio pins on the dev board
  * 
  * The Code is Largely Independent of the Board Specifics other than
- * the Wifi Library used and Pin Bindings
+ * the Wifi Library, Webserver and Pin Bindings
 */
 
 //Include Required Libraries
@@ -24,41 +24,46 @@
 
 //MQTT Broker Values
 #define aio_server      "io.adafruit.com"
-#define aio_serverport  1883
-#define aio_username    "Archit149"
-#define aio_key         "2619ba57dee340489754ca6dac5de74b"
-#define po_ts_feed      "Archit149/feeds/energymonitor.test-po-ts"
-#define subs_feed       "Archit149/feeds/energymonitor.schedule"
+#define aio_serverport  0000  //Ommited
+#define aio_username    ""//Ommited
+#define aio_key         ""//Ommited
+#define po_ts_feed      ""//Ommited
+#define subs_feed       ""//Ommited
 
 //NTP Server
-#define ntp_server          "time.nist.gov"     //NTP Server
+#define ntp_server          ""//Ommited     //NTP Server
+#define offset              19800               //+05:30 GMT
+#define auto_update_int     85600               //AutoSync from NTP Server Everyday
 
 //Pin Bindings
-#define ind_led             D4                  //LED for Physical Indication of Device
+#define ind_led             D4                  //LED for Physical Indication of Device (LED Active LOW)
 #define mqtt_pub_led        D4                  //LED for Publish Success Indication
 #define ap_control_pin      D8                  //For Externaly Controlling AP Enable Disable
-#define op_select0          D0                  //Decoder
-#define op_select1          D1                  //For Relay Control to Decoder 
-#define op_select2          D2                  //Decoder
-#define ip_select0          D5                  //MUX
-#define ip_select1          D6                  //For MUX Control
-#define ip_select2          D7                  //MUX
+#define dclk                D5                  //Output FF's Clock
+#define sel0                D1                  //Select Pins
+#define sel1                D2                  //For MUX and Decoder
+#define sel2                D3                  //Select Pins
+#define op_pin              D7                  //Output Value of Appliance (LED Active LOW)
 #define curr_inp            A0                  //Analog Pin for Current Measurement
+static const int sel_pins[3] = {sel0, sel1, sel2};
 
 //Intervals and Value Constants
 #define serial_baud_rate            115200                            //Serial Communication Baud Rate
 #define webserver_port              80                                //Port Number that the Server will Listen on
-#define sockets                     8                                 //Number of Appliances connected to the Node
-#define socket_pins                 int(ceil(log(sockets)/log(2)))    //Number of Pins required for socket selection
+#define sockets                     8                                 //Number of Appliances connected to the Node (Maximum 8)
+#if sockets > 1
+  #define socket_pins               int(ceil(log(sockets)/log(2)))    //Number of Pins required for socket selection
+#else
+  #define socket_pins               1
+#endif
 #define pub_str_size                (sockets + 1)*10                  //Length of the Publish String
 #define conn_wp                     20                                //Wait Period for WiFi Connection in seconds
 #define voltage                     230                               //Assumed Constant Voltage
-#define curr_calib                  5                                 //Current Calibration Factor
-#define spie                        30                                //Serial Print and Cloud Publish Interval for Energy Values 
-#define spic                        300                               //Serial Print and Time Force Update Interval for Config Values
+#define current_samples             1480                              //Number of Samples, Arguement to calcIrms
+#define spie                        10                                //Serial Print and Cloud Publish Interval for Energy Values 
+#define spic                        60                                //Serial Print and Time Force Update Interval for Config Values
 #define default_delay_interval      1000                              //Default Interval Variable used for millis delay in milliseconds
-#define offset                      19800                             //+05:30 GMT
-#define auto_update_int             85600                             //AutoSync from NTP Server Everyday
+const int curr_calib[8] = {5, 5, 5, 5, 5, 5, 5, 5};                   //Current Calibration Factors
 
 //Soft  Access Point
 const char *softSSID = "smartswitch";       //Credentials for Master Access Point
@@ -80,8 +85,8 @@ double curr_raw;                            //Current Measurement on specified P
 double power;                               //Power Measured using Current and Voltage
 char po_ts[pub_str_size];                   //Contains Combined value of Power and TimeStamp
 char* packet;                               //Packet Received from Subscription
-bool sch_status = false;                    //Preset the appliance to stay off
-unsigned long current_millis;               //For Millis Implementation
+bool sch_status[sockets] = {1};             //Preset the appliance to stay off
+unsigned long current_millis;               //For Millis delay of Control AP functionality
 unsigned long last_millis = 0;
 //
 
@@ -93,11 +98,11 @@ Adafruit_MQTT_Client mqtt_client_object(&client, aio_server, aio_serverport, aio
 Adafruit_MQTT_Publish po_ts_object(&mqtt_client_object, po_ts_feed);
 Adafruit_MQTT_Subscribe subscribe_object = Adafruit_MQTT_Subscribe(&mqtt_client_object, subs_feed);
 
-//Web Server Class Object, listens to requests on port 80 (HTTP)
+//Web Server Class Object, listens to requests on port specified port (HTTP)
 ESP8266WebServer server(webserver_port);
 
-//Energy Meter Class Object for Current Measurement
-EnergyMonitor curr;
+//Energy Meter Class Objects for Current Measurement from Multiple Sockets
+EnergyMonitor curr[sockets];
 
 //UDP Object and NTP Object for NTP Syncing
 WiFiUDP ntp_udp_client;
@@ -105,7 +110,6 @@ NTPClient time_object(ntp_udp_client, ntp_server, offset, auto_update_int);
 //
 
 //Function Prototypes
-
 //Web Server Handling Functions
 void handle_root();
 void handle_notfound();
@@ -114,12 +118,15 @@ void handle_connect_wifi();
 void handle_wifi_login();
 
 //Data Acquisition and Control Functions
+void spie_rep();
 int append_value_to_po_ts(double, bool, char*, int);
 void mux_select_write(int);
+void dec_select_write(int);
 
 //Network and Soft AP Connection Functions
 void sta_setup(char*, char*);
 void mqtt_connect();
+void ap_button_ontrigger();
 bool begin_ap();
 bool close_ap();
 //
@@ -132,16 +139,18 @@ void setup()
   pinMode(curr_inp, INPUT);           //Current Measurement Pin
   pinMode(ap_control_pin, INPUT);     //Controlling AP Externally
   
-  pinMode(ip_select0, OUTPUT);
-  pinMode(ip_select1, OUTPUT);
-  pinMode(ip_select2, OUTPUT);
-  
+  pinMode(sel0, OUTPUT);
+  pinMode(sel1, OUTPUT);
+  pinMode(sel2, OUTPUT);
+  pinMode(dclk, OUTPUT);
+  pinMode(op_pin, OUTPUT);
+   
   digitalWrite(ind_led, HIGH);        //Initially WiFi Not Connected and MQTT not publishing  
   
   // Begin Serial Communication with Arduino IDE
   Serial.begin(serial_baud_rate);
   Serial.printf("\nSuccesfully began Serial Communication With SoC at Baud %d", serial_baud_rate);
-  Serial.printf("\n#Appliance Sockets: %d", sockets);
+  Serial.printf("\n#Appliance Sockets: %d, Pins: %d", sockets, socket_pins);
   
   //Begin WiFi Setup
   WiFi.mode(WIFI_AP_STA);   //Declares the WiFi Mode as Station plus Access Point
@@ -158,7 +167,8 @@ void setup()
   server.onNotFound(handle_notfound);
 
   //Current Measurement Setup
-  curr.current(curr_inp, curr_calib);
+  for(int socket = 0; socket < sockets; socket++)
+    curr[socket].current(curr_inp, curr_calib[socket]);
 
   // Time Keeping Begins
   time_object.begin();
@@ -214,10 +224,17 @@ void loop() {
   //Handle Incoming HTTP requests from Clients
   server.handleClient();
 
+  //Set all selection pins to LOW
+  for(int i = 0; i < 3; i++)
+    digitalWrite(sel_pins[i], LOW);
+
+  //Set D-FF's clock LOW
+  digitalWrite(dclk, LOW);
+
   //WiFi connection LED Indication (Connected), and Force Time Update every "spic" seconds or if time_synced flag not set 
   if(WiFi.status() == WL_CONNECTED)
   {
-    digitalWrite(D4, LOW);
+    digitalWrite(ind_led, LOW);
     if(time_object.getEpochTime() % spic == 0)
     {
       ret = time_object.update();
@@ -225,31 +242,24 @@ void loop() {
     }
   }
   else
-    digitalWrite(D4, HIGH); //LED Indication not Connected
+    digitalWrite(ind_led, HIGH); //LED Indication not Connected
     
   //Access Point Control, Allows User to Press an External button to switch the Soft Access Point on or off.
-  if(digitalRead(ap_control_pin) == HIGH) 
-  //If Control Button Pressed? Acts as Daemon on Button Press only, not on enable_ap flag
-  {
-    ::current_millis = millis();
-    if(::current_millis > ::last_millis + 3*default_delay_interval)  
-    /*
-     * If Button pressed atleast after 3*default_delay_interval enable change
-     * Prevents Burst Presses or Fluctuation Errors
-    */
-    {
-      enable_ap = !enable_ap;
-      ::last_millis = ::current_millis;
-      if(enable_ap)
-        begin_ap();
-      else
-        close_ap();
-    }
-  }
+  if(digitalRead(ap_control_pin) == HIGH)
+    ap_button_ontrigger();
   
   //Serial Print and Publish Energy and Time Data Every spie seconds 
   if(time_object.getSeconds() % spie == 0 && pflag == 0)
   { 
+    /*
+     *conf Flag to Print Config Data
+     *Flag Set here as measurements introduce delay (~2000 ms)
+     *and hence comparison with spic fails later
+    */
+    bool conf = false;
+    if(time_object.getEpochTime() % spic == 0)
+      conf = true;
+
     //Index for Appending Value to end of Publish String, Initiate string to Null
     int append_index = 0;
     po_ts[append_index] = '\0';
@@ -259,18 +269,20 @@ void loop() {
     //Append TimeStamp to Publish String
     append_index = append_value_to_po_ts(timestamp, true, po_ts, append_index);
 
-    //Serial Print Energy Data, TimeStamp
+    //Collect and Serial Print Energy Data
     Serial.print("\n\nEnergy Data : ");
-    Serial.printf("\nTimeStamp : %l", timestamp);
+    Serial.printf("\nTimeStamp : %d", timestamp);
     
     long int m = millis();
     for(int i = 0; i < sockets; i++)
     {
       mux_select_write(i);
-      curr_raw = curr.calcIrms(1480);
+      Serial.println();
+      Serial.println(((analogRead(curr_inp)+1)*3.3)/1024);
+      curr_raw = curr[i].calcIrms(current_samples);
       power = voltage * curr_raw;
       append_index = append_value_to_po_ts(power, false, po_ts, append_index);
-      Serial.printf("\nDevice %d : %f", i, power);
+      Serial.printf("\nDevice %d (W): %f", i, power);
     }
     Serial.printf("\nMeasurement and Appending Time (ms): %d", millis() - m); 
     Serial.print("\nPublish String:\n");
@@ -286,7 +298,7 @@ void loop() {
       if(res)
       {
         digitalWrite(mqtt_pub_led, HIGH);
-        delay(200);
+        delay(default_delay_interval/5);
         digitalWrite(mqtt_pub_led, LOW);
       }
     }
@@ -305,7 +317,7 @@ void loop() {
     //and Check for new subscription
     //Do this after Power has been collected
     //Subscription used to Control Appliance
-    if(time_object.getEpochTime() % spic == 0)
+    if(conf)
     {
       mqtt_client_object.ping();  //Ping to Keep MQTT Connection Alive
       Serial.print("\n\nConfig Data :");
@@ -341,15 +353,30 @@ void loop() {
         Serial.print("\nPacket Received from Control Feed:\n");
         Serial.print(packet);
       }
-      //End of Subscription Reading and Parsing
+      
+      //Appliance Output Control
+      for(int device = 0; device < sockets; device++)
+      {
+        //Write the Status of the device to Output Pin
+        digitalWrite(op_pin, sch_status[device]);
+
+        //Set Decoder Inputs
+        dec_select_write(device);
+
+        //Pulse DFF Clock
+        digitalWrite(dclk, HIGH);
+        delay(25);
+        digitalWrite(dclk, LOW);
+        delay(25);
+      }
+      
     }
-    //pfalg used to display config data and read subscription only ONCE every spic seconds
+    //plag used to display config data and read subscription only ONCE every spic seconds
     pflag = 1;
   }
   else if(time_object.getSeconds() % spie != 0)
     pflag = 0;
-
-  //digitalWrite(pin#, sch_status);
+    
 }
 //
 
@@ -367,7 +394,7 @@ void handle_disconnect_wifi()
 {
   //Disconnect WiFi and send user to Home
   WiFi.disconnect();
-  digitalWrite(D4,HIGH);
+  digitalWrite(ind_led,HIGH);
   Serial.print("\nWiFi Disconnected");
   server.sendHeader("Location", "/");
   server.send(303);
@@ -509,16 +536,24 @@ void mux_select_write(int val)
  * Integer val is the index of the input to be selected
 */
 {
-  if(val > sockets)
+  
+  for(int m = 0; m < socket_pins; m++)
   {
-    
+    int comp = pow(2, m);
+    if((val & comp) != 0)
+      digitalWrite(sel_pins[m], HIGH);
+    else
+      digitalWrite(sel_pins[m], LOW);
   }
-  int m = 0;
-  do
-  {
-    digitalWrite(ip_select0, HIGH);
-    m++;
-  }while(pow(2, m-1) <= val);
+}
+
+void dec_select_write(int val)
+/*
+ * Writes the Select Pins to the Output Decoder/Demux
+ * Integer val is the index of the output to be selected
+*/
+{
+  
 }
 
 void sta_setup(char *s, char* p)    
@@ -540,7 +575,7 @@ void sta_setup(char *s, char* p)
   }
   if(sflag < conn_wp)
   {
-    digitalWrite(D4, LOW);
+    digitalWrite(ind_led, LOW);
     Serial.print("\nConnection Established! IP: ");
     Serial.print(WiFi.localIP());
     if(!::time_synced)
@@ -553,6 +588,28 @@ void sta_setup(char *s, char* p)
   else
     Serial.print("\nConnection couldn't be Established");
   sflag = 0;
+}
+
+void ap_button_ontrigger()
+/*
+ * When Control Button Pressed 
+ * Acts as Daemon on Button Press only, not on enable_ap flag
+ */
+{
+  ::current_millis = millis();
+  if(::current_millis > ::last_millis + 3*default_delay_interval)  
+  /*
+   * If Button pressed atleast after 3*default_delay_interval enable change
+   * Prevents Burst Presses or Fluctuation Errors
+   */
+  {
+    enable_ap = !enable_ap;
+    ::last_millis = ::current_millis;
+    if(enable_ap)
+      begin_ap();
+    else
+      close_ap();
+  }
 }
 
 bool begin_ap()
