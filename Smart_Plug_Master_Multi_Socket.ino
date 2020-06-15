@@ -24,14 +24,14 @@
 
 //MQTT Broker Values
 #define aio_server      "io.adafruit.com"
-#define aio_serverport  0000  //Ommited
-#define aio_username    ""//Ommited
-#define aio_key         ""//Ommited
-#define po_ts_feed      ""//Ommited
-#define subs_feed       ""//Ommited
+#define aio_serverport  0000
+#define aio_username    ""
+#define aio_key         ""
+#define po_ts_feed      ""
+#define subs_feed       ""
 
 //NTP Server
-#define ntp_server          ""//Ommited     //NTP Server
+#define ntp_server          "time.nist.gov"     //NTP Server
 #define offset              19800               //+05:30 GMT
 #define auto_update_int     85600               //AutoSync from NTP Server Everyday
 
@@ -40,14 +40,16 @@
 #define mqtt_pub_led        D4                  //LED for Publish Success Indication
 #define ap_control_pin      D8                  //For Externaly Controlling AP Enable Disable
 #define dclk                D5                  //Output FF's Clock
+#define rclk                D0                  //Clock Input for Register 
 #define sel0                D1                  //Select Pins
 #define sel1                D2                  //For MUX and Decoder
 #define sel2                D3                  //Select Pins
-#define op_pin              D7                  //Output Value of Appliance (LED Active LOW)
+#define serial_out          D7                  //Serial Output to Registers for Appliance Control
 #define curr_inp            A0                  //Analog Pin for Current Measurement
 static const int sel_pins[3] = {sel0, sel1, sel2};
 
 //Intervals and Value Constants
+#define max_sockets                 8
 #define serial_baud_rate            115200                            //Serial Communication Baud Rate
 #define webserver_port              80                                //Port Number that the Server will Listen on
 #define sockets                     8                                 //Number of Appliances connected to the Node (Maximum 8)
@@ -61,9 +63,9 @@ static const int sel_pins[3] = {sel0, sel1, sel2};
 #define voltage                     230                               //Assumed Constant Voltage
 #define current_samples             1480                              //Number of Samples, Arguement to calcIrms
 #define spie                        10                                //Serial Print and Cloud Publish Interval for Energy Values 
-#define spic                        60                                //Serial Print and Time Force Update Interval for Config Values
+#define spic                        20                                //Serial Print and Time Force Update Interval for Config Values
 #define default_delay_interval      1000                              //Default Interval Variable used for millis delay in milliseconds
-const int curr_calib[8] = {5, 5, 5, 5, 5, 5, 5, 5};                   //Current Calibration Factors
+const int curr_calib[max_sockets] = {5, 5, 5, 5, 5, 5, 5, 5};         //Current Calibration Factors
 
 //Soft  Access Point
 const char *softSSID = "smartswitch";       //Credentials for Master Access Point
@@ -85,7 +87,7 @@ double curr_raw;                            //Current Measurement on specified P
 double power;                               //Power Measured using Current and Voltage
 char po_ts[pub_str_size];                   //Contains Combined value of Power and TimeStamp
 char* packet;                               //Packet Received from Subscription
-bool sch_status[sockets] = {1};             //Preset the appliance to stay off
+bool sch_status[sockets] = {1,0,0,1,0,0,1,1};             //Preset the appliance to stay off
 unsigned long current_millis;               //For Millis delay of Control AP functionality
 unsigned long last_millis = 0;
 //
@@ -110,6 +112,7 @@ NTPClient time_object(ntp_udp_client, ntp_server, offset, auto_update_int);
 //
 
 //Function Prototypes
+
 //Web Server Handling Functions
 void handle_root();
 void handle_notfound();
@@ -143,7 +146,8 @@ void setup()
   pinMode(sel1, OUTPUT);
   pinMode(sel2, OUTPUT);
   pinMode(dclk, OUTPUT);
-  pinMode(op_pin, OUTPUT);
+  pinMode(rclk, OUTPUT);
+  pinMode(serial_out, OUTPUT);
    
   digitalWrite(ind_led, HIGH);        //Initially WiFi Not Connected and MQTT not publishing  
   
@@ -312,14 +316,46 @@ void loop() {
         mqtt_connect();
       }
     }
-    
-    //Print Config Data Every spic seconds,
-    //and Check for new subscription
+
+    //Get NEw Subscription from Feed and 
+    //Control Appliances, then
+    //Print Config Data,
     //Do this after Power has been collected
-    //Subscription used to Control Appliance
+    //Every spic seconds
     if(conf)
     {
       mqtt_client_object.ping();  //Ping to Keep MQTT Connection Alive
+      
+      //Read Subscription
+      Adafruit_MQTT_Subscribe *schedule;
+      schedule = mqtt_client_object.readSubscription(2000);
+      if (schedule == &subscribe_object)
+      {
+        packet = (char*)subscribe_object.lastread;
+        Serial.print("\nPacket Received from Control Feed:\n");
+        Serial.print(packet);
+      }
+      
+      //Appliance Output Control
+      for(int device = 0; device < max_sockets; device++)
+      {
+        //Write the Status of the device to Output Pin
+        digitalWrite(serial_out, sch_status[device]);
+        delay(0.1);
+
+        digitalWrite(rclk, LOW);
+        digitalWrite(rclk, HIGH);
+        delay(1);
+        digitalWrite(rclk, LOW);
+        delay(1);
+      }
+      //Pulse DFF Clock
+      digitalWrite(dclk, HIGH);
+      delay(1);
+      digitalWrite(dclk, LOW);
+      delay(1);
+      digitalWrite(serial_out, LOW);
+      
       Serial.print("\n\nConfig Data :");
       Serial.print("\nWiFi Connected : ");
       if(WiFi.status() == WL_CONNECTED) 
@@ -344,31 +380,6 @@ void loop() {
       Serial.print("\nMQTT Connection : ");
       mqtt_client_object.connected() ? Serial.print("Alive") : Serial.print("Dead");  
 
-      //Read Subscription
-      Adafruit_MQTT_Subscribe *schedule;
-      schedule = mqtt_client_object.readSubscription(2000);
-      if (schedule == &subscribe_object)
-      {
-        packet = (char*)subscribe_object.lastread;
-        Serial.print("\nPacket Received from Control Feed:\n");
-        Serial.print(packet);
-      }
-      
-      //Appliance Output Control
-      for(int device = 0; device < sockets; device++)
-      {
-        //Write the Status of the device to Output Pin
-        digitalWrite(op_pin, sch_status[device]);
-
-        //Set Decoder Inputs
-        dec_select_write(device);
-
-        //Pulse DFF Clock
-        digitalWrite(dclk, HIGH);
-        delay(25);
-        digitalWrite(dclk, LOW);
-        delay(25);
-      }
       
     }
     //plag used to display config data and read subscription only ONCE every spic seconds
