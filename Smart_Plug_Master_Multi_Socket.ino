@@ -16,8 +16,8 @@
 #include <EmonLib.h>                //Open Source Energy monitor Library
 #include <NTPClient.h>              //NTP Client for Time Sync
 #include <WiFiUDP.h>                //Used for Adafruit MQTT
-#include <Adafruit_MQTT.h>          //Adafruit MQTT
-#include <Adafruit_MQTT_Client.h>   //Adafruit MQTT Client
+#include "Adafruit_MQTT.h"          //Adafruit MQTT
+#include "Adafruit_MQTT_Client.h"   //Adafruit MQTT Client
 //
 
 //Constants Declarations
@@ -52,7 +52,7 @@ static const int sel_pins[3] = {sel0, sel1, sel2};
 #define max_sockets                 8
 #define serial_baud_rate            115200                            //Serial Communication Baud Rate
 #define webserver_port              80                                //Port Number that the Server will Listen on
-#define sockets                     8                                 //Number of Appliances connected to the Node (Maximum 8)
+#define sockets                     5                                 //Number of Appliances connected to the Node (Maximum 8)
 #if sockets > 1
   #define socket_pins               int(ceil(log(sockets)/log(2)))    //Number of Pins required for socket selection
 #else
@@ -62,8 +62,8 @@ static const int sel_pins[3] = {sel0, sel1, sel2};
 #define conn_wp                     20                                //Wait Period for WiFi Connection in seconds
 #define voltage                     230                               //Assumed Constant Voltage
 #define current_samples             1480                              //Number of Samples, Arguement to calcIrms
-#define spie                        10                                //Serial Print and Cloud Publish Interval for Energy Values 
-#define spic                        20                                //Serial Print and Time Force Update Interval for Config Values
+#define spie                        20                                //Serial Print and Cloud Publish Interval for Energy Values 
+#define spic                        40                                //Serial Print and Time Force Update Interval for Config Values
 #define default_delay_interval      1000                              //Default Interval Variable used for millis delay in milliseconds
 const int curr_calib[max_sockets] = {5, 5, 5, 5, 5, 5, 5, 5};         //Current Calibration Factors
 
@@ -87,7 +87,7 @@ double curr_raw;                            //Current Measurement on specified P
 double power;                               //Power Measured using Current and Voltage
 char po_ts[pub_str_size];                   //Contains Combined value of Power and TimeStamp
 char* packet;                               //Packet Received from Subscription
-bool sch_status[sockets] = {1,0,0,1,0,0,1,1};             //Preset the appliance to stay off
+bool sch_status[max_sockets] = {0};         //Preset the appliance to stay off
 unsigned long current_millis;               //For Millis delay of Control AP functionality
 unsigned long last_millis = 0;
 //
@@ -95,10 +95,10 @@ unsigned long last_millis = 0;
 //Class Object Declarations
 WiFiClient client;
 
-//MQTT Client Class Object
-Adafruit_MQTT_Client mqtt_client_object(&client, aio_server, aio_serverport, aio_username, aio_key);
-Adafruit_MQTT_Publish po_ts_object(&mqtt_client_object, po_ts_feed);
-Adafruit_MQTT_Subscribe subscribe_object = Adafruit_MQTT_Subscribe(&mqtt_client_object, subs_feed);
+//MQTT Client Objects
+Adafruit_MQTT_Client mqttclient(&client, aio_server, aio_serverport, aio_username, aio_key);
+Adafruit_MQTT_Publish pubobject = Adafruit_MQTT_Publish(&mqttclient, po_ts_feed);
+Adafruit_MQTT_Subscribe subobject = Adafruit_MQTT_Subscribe(&mqttclient, subs_feed);
 
 //Web Server Class Object, listens to requests on port specified port (HTTP)
 ESP8266WebServer server(webserver_port);
@@ -112,7 +112,6 @@ NTPClient time_object(ntp_udp_client, ntp_server, offset, auto_update_int);
 //
 
 //Function Prototypes
-
 //Web Server Handling Functions
 void handle_root();
 void handle_notfound();
@@ -121,12 +120,12 @@ void handle_connect_wifi();
 void handle_wifi_login();
 
 //Data Acquisition and Control Functions
-void spie_rep();
 int append_value_to_po_ts(double, bool, char*, int);
 void mux_select_write(int);
-void dec_select_write(int);
+long long parse_control_packet(char*, bool*);
 
-//Network and Soft AP Connection Functions
+//Configuraton, Network and Soft AP Connection Functions
+void serial_print_config();
 void sta_setup(char*, char*);
 void mqtt_connect();
 void ap_button_ontrigger();
@@ -150,20 +149,20 @@ void setup()
   pinMode(serial_out, OUTPUT);
    
   digitalWrite(ind_led, HIGH);        //Initially WiFi Not Connected and MQTT not publishing  
+
+  //Begin WiFi Setup
+  WiFi.mode(WIFI_AP_STA);   //Declares the WiFi Mode as Station plus Access Point
   
   // Begin Serial Communication with Arduino IDE
   Serial.begin(serial_baud_rate);
-  Serial.printf("\nSuccesfully began Serial Communication With SoC at Baud %d", serial_baud_rate);
-  Serial.printf("\n#Appliance Sockets: %d, Pins: %d", sockets, socket_pins);
-  
-  //Begin WiFi Setup
-  WiFi.mode(WIFI_AP_STA);   //Declares the WiFi Mode as Station plus Access Point
-  //WiFi Access Point Mode Moved to an External function declared as begin_ap();
-//  enable_ap ? begin_ap() : true ;
+  Serial.printf("\n\n*****Begin Serial Communication With SoC*****");
+  Serial.printf("\nSerial Baud: \t\t\t%d", serial_baud_rate);
+  Serial.printf("\n#of Appliance Sockets: \t%d", sockets, socket_pins);
+  Serial.printf("\n#of Socket Pins Used: \t\t%d", socket_pins);
   
   //HTML Server and Handles
+  Serial.printf("\nWebServer Started port: \t%d", webserver_port);
   server.begin();
-  Serial.printf("\nStarting HTTPS WebServer on port %d", webserver_port);
   server.on("/", HTTP_GET, handle_root);
   server.on("/disconnect_wifi", HTTP_POST, handle_disconnect_wifi);
   server.on("/connect_wifi", HTTP_POST, handle_connect_wifi);
@@ -178,8 +177,8 @@ void setup()
   time_object.begin();
 
   //WiFi Connection Begins
+  Serial.print("\nConnecting, last known WiFi\n");
   WiFi.begin();   //Tries Connection to Last Known Network
-  Serial.print("\nConnecting to Last Known Network");
   while(WiFi.status() != WL_CONNECTED && ::sflag < conn_wp)
   //Waits for Connection to be made till TIMEOUT = conn_wp, uses sflag
   {
@@ -193,7 +192,7 @@ void setup()
    * Stop connection, Open Soft AP and set enable_ap flag 
   */
   {
-    Serial.print("\nWarning : Couldnt Connect to Network");
+    Serial.print("\nWarning: Couldnt Connect to Network");
     WiFi.disconnect();
     begin_ap();
     enable_ap = true;
@@ -205,20 +204,25 @@ void setup()
   //enable_ap flag not required to be set to false, as loop doesn't act as daemon for enable_ap (starts only when button is pressed)
   //Attempt Time Sync from NTP and Set time_synced flag appropriately
   {
-    Serial.print("\nConnection Successful to: ");
-    Serial.print(WiFi.SSID());
-    Serial.print("\nIP Address: ");
-    Serial.print(WiFi.localIP());
     close_ap();
     ret = time_object.update();
-    ret ? Serial.print("\nTime Sync Successful") :  Serial.print("\nWarning : Time Sync Failed");
     ret ? ::time_synced = true : ::time_synced = false;
+
+    Serial.print("\nConnection Successful");
+    Serial.printf("\nWiFi SSID: \t\t\t\t");
+    Serial.print(WiFi.SSID());
+    Serial.print("\nIP Address: \t\t\t");
+    Serial.print(WiFi.localIP());
+    ret ? Serial.print("\nTime Sync: \t\t\t\tSuccessful") :  Serial.print("\nWarning: Time Sync Failed");
+    
   }
   ::sflag = 0;    //Reset Sflag for Other Uses
   
   //Attempt MQTT Connection
+  mqttclient.subscribe(&subobject);  //Subscribe first, then connect
   mqtt_connect();
-  mqtt_client_object.subscribe(&subscribe_object);
+  
+  Serial.print("\n*************** Setup Complete **************");
 }
 //
 
@@ -252,53 +256,41 @@ void loop() {
   if(digitalRead(ap_control_pin) == HIGH)
     ap_button_ontrigger();
   
+  //Get Current timestamp
   //Serial Print and Publish Energy and Time Data Every spie seconds 
-  if(time_object.getSeconds() % spie == 0 && pflag == 0)
+  timestamp = time_object.getEpochTime();
+  if(timestamp % spie == 0 && pflag == 0)
   { 
-    /*
-     *conf Flag to Print Config Data
-     *Flag Set here as measurements introduce delay (~2000 ms)
-     *and hence comparison with spic fails later
-    */
-    bool conf = false;
-    if(time_object.getEpochTime() % spic == 0)
-      conf = true;
-
+    
     //Index for Appending Value to end of Publish String, Initiate string to Null
     int append_index = 0;
     po_ts[append_index] = '\0';
 
-    //Get Current timestamp
-    timestamp = time_object.getEpochTime();
     //Append TimeStamp to Publish String
     append_index = append_value_to_po_ts(timestamp, true, po_ts, append_index);
 
     //Collect and Serial Print Energy Data
-    Serial.print("\n\nEnergy Data : ");
-    Serial.printf("\nTimeStamp : %d", timestamp);
+    Serial.print("\n\nPower:");
+    Serial.printf("\nTimeStamp: \t%d", timestamp);
     
     long int m = millis();
     for(int i = 0; i < sockets; i++)
     {
       mux_select_write(i);
-      Serial.println();
-      Serial.println(((analogRead(curr_inp)+1)*3.3)/1024);
       curr_raw = curr[i].calcIrms(current_samples);
       power = voltage * curr_raw;
       append_index = append_value_to_po_ts(power, false, po_ts, append_index);
-      Serial.printf("\nDevice %d (W): %f", i, power);
+      Serial.printf("\nDevice %d (W): \t%f", i, power);
     }
     Serial.printf("\nMeasurement and Appending Time (ms): %d", millis() - m); 
-    Serial.print("\nPublish String:\n");
-    Serial.print(po_ts);
 
     //MQTT Connection and Time Sync Check
-    if(mqtt_client_object.connected() && time_synced)
+    if(mqttclient.connected() && time_synced)
     //If Connected and Time Synced
     //Publish the Publish String to MQTT Broker and Indicate Appropriately
     {
       bool res;
-      res = po_ts_object.publish(po_ts);
+      res = pubobject.publish(po_ts);
       if(res)
       {
         digitalWrite(mqtt_pub_led, HIGH);
@@ -317,70 +309,60 @@ void loop() {
       }
     }
 
-    //Get NEw Subscription from Feed and 
+    //Get New Subscription from Feed and 
     //Control Appliances, then
     //Print Config Data,
     //Do this after Power has been collected
     //Every spic seconds
-    if(conf)
+    if(timestamp % spic == 0)
     {
-      mqtt_client_object.ping();  //Ping to Keep MQTT Connection Alive
-      
       //Read Subscription
-      Adafruit_MQTT_Subscribe *schedule;
-      schedule = mqtt_client_object.readSubscription(2000);
-      if (schedule == &subscribe_object)
+      long int control_time;
+      
+      Adafruit_MQTT_Subscribe *sub;
+      sub = mqttclient.readSubscription(2000);
+      packet = (char*)subobject.lastread;
+      if(strcmp(packet, "") !=  0)
       {
-        packet = (char*)subscribe_object.lastread;
-        Serial.print("\nPacket Received from Control Feed:\n");
-        Serial.print(packet);
+        control_time = parse_control_packet(packet, sch_status);
+        
+        Serial.printf("\nNew Packet Received from Control Feed:\n%s", packet);
+        Serial.printf("\nControl Timestamp: %d", control_time);
+        Serial.print("\nControl Word: ");
+        for(int i = 0; i < max_sockets; i++)
+          Serial.print(sch_status[i]);
+      
       }
       
       //Appliance Output Control
-      for(int device = 0; device < max_sockets; device++)
+      //Send Control Word to Register if 
+      //Received Control Packet matches current timestamp
+      if(timestamp == control_time)
       {
-        //Write the Status of the device to Output Pin
-        digitalWrite(serial_out, sch_status[device]);
-        delay(0.1);
-
-        digitalWrite(rclk, LOW);
-        digitalWrite(rclk, HIGH);
-        delay(1);
-        digitalWrite(rclk, LOW);
-        delay(1);
-      }
-      //Pulse DFF Clock
-      digitalWrite(dclk, HIGH);
-      delay(1);
-      digitalWrite(dclk, LOW);
-      delay(1);
-      digitalWrite(serial_out, LOW);
+        Serial.print("\nControl Word Sent to Register");
+        for(int device = 0; device < max_sockets; device++)
+        {
+          //Write the Status of the device to Output Pin
+          digitalWrite(serial_out, sch_status[device]);
+          //Delay 100ns Cover Setup and Hold Times for Register IC
+          delay(0.1);
+        
+          digitalWrite(rclk, LOW);
+          digitalWrite(rclk, HIGH);
+          delay(1);
+          digitalWrite(rclk, LOW);
+          delay(1);
+        }
       
-      Serial.print("\n\nConfig Data :");
-      Serial.print("\nWiFi Connected : ");
-      if(WiFi.status() == WL_CONNECTED) 
-      {
-        Serial.print("Yes"); 
-        Serial.print("\nSSID : ");
-        Serial.print(WiFi.SSID());
-        Serial.print("\nIP : ");
-        Serial.print(WiFi.localIP());
+        //Pulse DFF Clock
+        digitalWrite(dclk, HIGH);
+        delay(1);
+        digitalWrite(dclk, LOW);
+        delay(1);
+        digitalWrite(serial_out, LOW);
       }
-      else
-        Serial.print("No");
-      if(enable_ap)
-      {
-        Serial.print("\nSoft AP: Active");
-        Serial.printf("\nStations Connected to AP: %d", WiFi.softAPgetStationNum());
-      }
-      else
-        Serial.print("\nSoft AP: Inactive");
-      Serial.print("\nTime Synced : ");
-      ::time_synced ? Serial.print("Yes") : Serial.print("No");
-      Serial.print("\nMQTT Connection : ");
-      mqtt_client_object.connected() ? Serial.print("Alive") : Serial.print("Dead");  
-
-      
+      //Print Config Data
+      serial_print_config();
     }
     //plag used to display config data and read subscription only ONCE every spic seconds
     pflag = 1;
@@ -558,13 +540,67 @@ void mux_select_write(int val)
   }
 }
 
-void dec_select_write(int val)
+long long parse_control_packet(char* packet, bool* control)
 /*
- * Writes the Select Pins to the Output Decoder/Demux
- * Integer val is the index of the output to be selected
-*/
+ * Parses the Received Control Packet and Stores the Control Values 
+ * in the Array taken as an arguement for the function
+ */
 {
+  long long timestamp = 0;
+  int i, index;
+
+  packet[0] == '{' ? index = 1: index = 0;
+
+  //Preset the Control Word to Zero
+  //Sets the End Bits to Zero when 
+  //sockets < maxsockets
+  for(i = 0; i < max_sockets; i++)
+    control[i] = 0;
   
+  for( ; packet[index] != ',' ; index ++)
+  {
+    timestamp *= 10;
+    timestamp += packet[index] - 48;
+  }
+
+  for(i = 0; packet[index] != '\0' ; index++)
+  {
+    if(packet[index] == '0' || packet[index] == '1')
+    {
+      control[i] = packet[index] - 48;
+      i++;
+    }
+  }
+  return timestamp;
+}
+
+void serial_print_config()
+// Print Config Data To Serial
+{
+  Serial.print("\n\n******* Current Configuration *******");
+  Serial.print("\nWiFi Connected: \t\t");
+  if(WiFi.status() == WL_CONNECTED) 
+  {
+    Serial.print("Yes"); 
+    Serial.print("\nWiFi SSID: \t\t\t");
+    Serial.print(WiFi.SSID());
+    Serial.print("\nIP Address: \t\t");
+    Serial.print(WiFi.localIP());
+  }
+  else
+    Serial.print("No");
+  if(enable_ap)
+  {
+    Serial.print("\nSoft AP Status: \t\tActive");
+    Serial.printf("\nSoft AP Clients:\t\t%d", WiFi.softAPgetStationNum());
+  }
+  else
+    Serial.print("\nSoft AP Status: \t\tInactive");
+  Serial.print("\nTime Synced: \t\t");
+  ::time_synced ? Serial.print("Yes") : Serial.print("No");
+  Serial.print("\nMQTT Connection: \t");
+  mqttclient.connected() ? Serial.print("Alive") : Serial.print("Dead"); 
+  Serial.print("\n*************************************");
 }
 
 void sta_setup(char *s, char* p)    
@@ -650,18 +686,18 @@ bool close_ap()
 void mqtt_connect()
 {
   int r = 1;
-  if(mqtt_client_object.connected())  //return nothing if already Connected
+  if(mqttclient.connected())  //return nothing if already Connected
     return;
   if(WiFi.status() != WL_CONNECTED)   //Set flag if WiFi not connected
     r = -2;
   Serial.print("\nAdafruit MQTT Connecting");
-  while((ret = mqtt_client_object.connect()) != 0 && r != -2)
+  while((ret = mqttclient.connect()) != 0 && r != -2)
   //if WiFi connected and MQTT Connection failed, retry in 1 second
   {
     Serial.println();
     Serial.print("\nRetrying MQTT connection in 1 second...");
     delay(default_delay_interval/2);
-    mqtt_client_object.disconnect();
+    mqttclient.disconnect();
     delay(default_delay_interval/2);
     r--;    //Retry only once then exit from retry loop
     if( r < 0 )
