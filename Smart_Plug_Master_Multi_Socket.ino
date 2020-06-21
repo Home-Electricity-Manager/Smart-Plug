@@ -1,12 +1,12 @@
 /*
- * Code for the Energy Boosters' Teams Smart Plug Multi Socket on the NodeMCU 0.9 Module
- * Developed by Archit Jain
- * 
- * Maximum Number of Possible Sockets for the ESP8266 (NodeMCU) is 8
- * owing to a limited number of gpio pins on the dev board
- * 
- * The Code is Largely Independent of the Board Specifics other than
- * the Wifi Library, Webserver and Pin Bindings
+   Code for the Energy Boosters' Teams Smart Plug Multi Socket on the NodeMCU 0.9 Module
+   Developed by Archit Jain
+
+   Maximum Number of Possible Sockets for the ESP8266 (NodeMCU) is 8
+   owing to a limited number of gpio pins on the dev board
+
+   The Code is Largely Independent of the Board Specifics other than
+   the Wifi Library, Webserver and Pin Bindings
 */
 
 //Include Required Libraries
@@ -15,7 +15,7 @@
 #include <ESP8266WebServer.h>       //WebServer for Network Connection
 #include <EmonLib.h>                //Open Source Energy monitor Library
 #include <NTPClient.h>              //NTP Client for Time Sync
-#include <WiFiUDP.h>                //Used for Adafruit MQTT
+#include <WiFiUDP.h>                //NTP Client Dependency //Client Uses UDP protocol
 #include "Adafruit_MQTT.h"          //Adafruit MQTT
 #include "Adafruit_MQTT_Client.h"   //Adafruit MQTT Client
 //
@@ -24,11 +24,12 @@
 
 //MQTT Broker Values
 #define aio_server      "io.adafruit.com"
-#define aio_serverport  0000
+#define aio_serverport  8883
 #define aio_username    ""
 #define aio_key         ""
-#define po_ts_feed      ""
+#define pub_feed        ""
 #define subs_feed       ""
+static const char *fingerprint PROGMEM = " ";
 
 //NTP Server
 #define ntp_server          "time.nist.gov"     //NTP Server
@@ -36,8 +37,7 @@
 #define auto_update_int     85600               //AutoSync from NTP Server Everyday
 
 //Pin Bindings
-#define ind_led             D4                  //LED for Physical Indication of Device (LED Active LOW)
-#define mqtt_pub_led        D4                  //LED for Publish Success Indication
+#define ind_led             D4                  //LED for Physical Indication of Device Ststus (LED Active LOW)
 #define ap_control_pin      D8                  //For Externaly Controlling AP Enable Disable
 #define dclk                D5                  //Output FF's Clock
 #define rclk                D0                  //Clock Input for Register 
@@ -52,32 +52,32 @@ static const int sel_pins[3] = {sel0, sel1, sel2};
 #define max_sockets                 8
 #define serial_baud_rate            115200                            //Serial Communication Baud Rate
 #define webserver_port              80                                //Port Number that the Server will Listen on
-#define sockets                     5                                 //Number of Appliances connected to the Node (Maximum 8)
+#define sockets                     8                                 //Number of Appliances connected to the Node (Maximum 8)
 #if sockets > 1
-  #define socket_pins               int(ceil(log(sockets)/log(2)))    //Number of Pins required for socket selection
+#define socket_pins                 int(ceil(log(sockets)/log(2)))    //Number of Pins required for socket selection
 #else
-  #define socket_pins               1
+#define socket_pins                 1
 #endif
-#define pub_str_size                (sockets + 1)*10                  //Length of the Publish String
+#define pub_str_size                11 + (sockets)*8              //Length of the Publish String
 #define conn_wp                     20                                //Wait Period for WiFi Connection in seconds
 #define voltage                     230                               //Assumed Constant Voltage
 #define current_samples             1480                              //Number of Samples, Arguement to calcIrms
-#define spie                        20                                //Serial Print and Cloud Publish Interval for Energy Values 
-#define spic                        40                                //Serial Print and Time Force Update Interval for Config Values
+#define spie                        30                                //Serial Print and Cloud Publish Interval for Energy Values 
+#define spic                        300                               //Serial Print and Time Force Update Interval for Config Values
 #define default_delay_interval      1000                              //Default Interval Variable used for millis delay in milliseconds
 const int curr_calib[max_sockets] = {5, 5, 5, 5, 5, 5, 5, 5};         //Current Calibration Factors
 
 //Soft  Access Point
 const char *softSSID = "smartswitch";       //Credentials for Master Access Point
 const char *softPASS = "smartswitch";       //For the function to work, the password should be more than 8 chars and should begin with a char too
-IPAddress softAP_ip(192,168,5,1);
-IPAddress softAP_gateway(192,168,5,1);      //IP config for the soft Access Point
-IPAddress softAP_subnet(255,255,255,0);
+IPAddress softAP_ip(192, 168, 5, 1);
+IPAddress softAP_gateway(192, 168, 5, 1);   //IP config for the soft Access Point
+IPAddress softAP_subnet(255, 255, 255, 0);
 
 //Flags
 int sflag = 0;                              //sflag: flag used in setup for WiFi Connection Time Out and later in HTTPS Server Functions to check for connection success
 int pflag = 0;                              //pflag: flag used to make sure power measurement is run one time only and based on current time (timestamp)
-bool ret;                                   //For Various Connection Result Return Values 
+bool ret;                                   //For Various Connection Result Return Values
 bool time_synced = false;                   //Keeps Track of Whether Time is Set or not
 bool enable_ap = false;                     //To Enable AP for WiFi Configuration
 
@@ -93,11 +93,11 @@ unsigned long last_millis = 0;
 //
 
 //Class Object Declarations
-WiFiClient client;
+WiFiClientSecure client;
 
 //MQTT Client Objects
 Adafruit_MQTT_Client mqttclient(&client, aio_server, aio_serverport, aio_username, aio_key);
-Adafruit_MQTT_Publish pubobject = Adafruit_MQTT_Publish(&mqttclient, po_ts_feed);
+Adafruit_MQTT_Publish pubobject = Adafruit_MQTT_Publish(&mqttclient, pub_feed);
 Adafruit_MQTT_Subscribe subobject = Adafruit_MQTT_Subscribe(&mqttclient, subs_feed);
 
 //Web Server Class Object, listens to requests on port specified port (HTTP)
@@ -140,28 +140,32 @@ void setup()
   pinMode(ind_led, OUTPUT);           //LED Indication for WiFi Connection and MQTT Publishing
   pinMode(curr_inp, INPUT);           //Current Measurement Pin
   pinMode(ap_control_pin, INPUT);     //Controlling AP Externally
-  
+
   pinMode(sel0, OUTPUT);
   pinMode(sel1, OUTPUT);
   pinMode(sel2, OUTPUT);
   pinMode(dclk, OUTPUT);
   pinMode(rclk, OUTPUT);
   pinMode(serial_out, OUTPUT);
-   
-  digitalWrite(ind_led, HIGH);        //Initially WiFi Not Connected and MQTT not publishing  
+
+  digitalWrite(ind_led, HIGH);        //Initially WiFi Not Connected and MQTT not publishing
 
   //Begin WiFi Setup
   WiFi.mode(WIFI_AP_STA);   //Declares the WiFi Mode as Station plus Access Point
-  
+
   // Begin Serial Communication with Arduino IDE
   Serial.begin(serial_baud_rate);
-  Serial.printf("\n\n*****Begin Serial Communication With SoC*****");
-  Serial.printf("\nSerial Baud: \t\t\t%d", serial_baud_rate);
-  Serial.printf("\n#of Appliance Sockets: \t%d", sockets, socket_pins);
-  Serial.printf("\n#of Socket Pins Used: \t\t%d", socket_pins);
-  
+  Serial.print(F("\n\n*****Begin Serial Communication With SoC*****"));
+  Serial.print(F("\nSerial Baud:               \t"));
+  Serial.print(serial_baud_rate);
+  Serial.print(F("\n#of Appliance Sockets:     \t"));
+  Serial.print(sockets);
+  Serial.print(F("\n#of Socket Pins Used:      \t"));
+  Serial.print(socket_pins);
+
   //HTML Server and Handles
-  Serial.printf("\nWebServer Started port: \t%d", webserver_port);
+  Serial.print(F("\nWebServer Started port:    \t"));
+  Serial.print(webserver_port);
   server.begin();
   server.on("/", HTTP_GET, handle_root);
   server.on("/disconnect_wifi", HTTP_POST, handle_disconnect_wifi);
@@ -170,59 +174,60 @@ void setup()
   server.onNotFound(handle_notfound);
 
   //Current Measurement Setup
-  for(int socket = 0; socket < sockets; socket++)
+  for (int socket = 0; socket < sockets; socket++)
     curr[socket].current(curr_inp, curr_calib[socket]);
 
   // Time Keeping Begins
   time_object.begin();
 
   //WiFi Connection Begins
-  Serial.print("\nConnecting, last known WiFi\n");
+  Serial.print(F("\nConnecting, last known WiFi\n"));
   WiFi.begin();   //Tries Connection to Last Known Network
-  while(WiFi.status() != WL_CONNECTED && ::sflag < conn_wp)
-  //Waits for Connection to be made till TIMEOUT = conn_wp, uses sflag
+  while (WiFi.status() != WL_CONNECTED && ::sflag < conn_wp)
+    //Waits for Connection to be made till TIMEOUT = conn_wp, uses sflag
   {
     Serial.print(".");
     ::sflag++;
     delay(default_delay_interval);
   }
-  if(::sflag == conn_wp)
-  /*
-   * If sflag reaches TIMEOUT, Connection not made
-   * Stop connection, Open Soft AP and set enable_ap flag 
-  */
+  if (::sflag == conn_wp)
+    /*
+       If sflag reaches TIMEOUT, Connection not made
+       Stop connection, Open Soft AP and set enable_ap flag
+    */
   {
-    Serial.print("\nWarning: Couldnt Connect to Network");
+    Serial.print(F("\nWarning: Couldnt Connect to Network"));
     WiFi.disconnect();
     begin_ap();
     enable_ap = true;
     delay(default_delay_interval);
   }
   else
-  //If sflag not TIMED OUT, Connection Made
-  //Print SSID and IP, Close Soft AP 
-  //enable_ap flag not required to be set to false, as loop doesn't act as daemon for enable_ap (starts only when button is pressed)
-  //Attempt Time Sync from NTP and Set time_synced flag appropriately
+    //If sflag not TIMED OUT, Connection Made
+    //Print SSID and IP, Close Soft AP
+    //enable_ap flag not required to be set to false, as loop doesn't act as daemon for enable_ap (starts only when button is pressed)
+    //Attempt Time Sync from NTP and Set time_synced flag appropriately
   {
     close_ap();
     ret = time_object.update();
     ret ? ::time_synced = true : ::time_synced = false;
 
-    Serial.print("\nConnection Successful");
-    Serial.printf("\nWiFi SSID: \t\t\t\t");
+    Serial.print(F("\nConnection Successful"));
+    Serial.print(F("\nWiFi SSID:                 \t"));
     Serial.print(WiFi.SSID());
-    Serial.print("\nIP Address: \t\t\t");
+    Serial.print(F("\nIP Address:                \t"));
     Serial.print(WiFi.localIP());
-    ret ? Serial.print("\nTime Sync: \t\t\t\tSuccessful") :  Serial.print("\nWarning: Time Sync Failed");
-    
+    ret ? Serial.print(F("\nTime Sync:                 \tSuccessful")) :  Serial.print(F("\nWarning: Time Sync Failed"));
+
   }
   ::sflag = 0;    //Reset Sflag for Other Uses
-  
-  //Attempt MQTT Connection
+
+  //MQTT Connection
+  client.setFingerprint(fingerprint);
   mqttclient.subscribe(&subobject);  //Subscribe first, then connect
   mqtt_connect();
-  
-  Serial.print("\n*************** Setup Complete **************");
+
+  Serial.print(F("\n*************** Setup Complete **************"));
 }
 //
 
@@ -233,17 +238,17 @@ void loop() {
   server.handleClient();
 
   //Set all selection pins to LOW
-  for(int i = 0; i < 3; i++)
+  for (int i = 0; i < 3; i++)
     digitalWrite(sel_pins[i], LOW);
 
   //Set D-FF's clock LOW
   digitalWrite(dclk, LOW);
 
-  //WiFi connection LED Indication (Connected), and Force Time Update every "spic" seconds or if time_synced flag not set 
-  if(WiFi.status() == WL_CONNECTED)
+  //WiFi connection LED Indication (Connected), and Force Time Update every "spic" seconds or if time_synced flag not set
+  if (WiFi.status() == WL_CONNECTED)
   {
     digitalWrite(ind_led, LOW);
-    if(time_object.getEpochTime() % spic == 0)
+    if (time_object.getEpochTime() % spic == 0)
     {
       ret = time_object.update();
       !::time_synced && ret ? ::time_synced = true : ret ;   //Set Flag to true if previously false
@@ -251,17 +256,17 @@ void loop() {
   }
   else
     digitalWrite(ind_led, HIGH); //LED Indication not Connected
-    
+
   //Access Point Control, Allows User to Press an External button to switch the Soft Access Point on or off.
-  if(digitalRead(ap_control_pin) == HIGH)
+  if (digitalRead(ap_control_pin) == HIGH)
     ap_button_ontrigger();
-  
+
   //Get Current timestamp
-  //Serial Print and Publish Energy and Time Data Every spie seconds 
+  //Serial Print and Publish Energy and Time Data Every spie seconds
   timestamp = time_object.getEpochTime();
-  if(timestamp % spie == 0 && pflag == 0)
-  { 
-    
+  if (timestamp % spie == 0 && pflag == 0)
+  {
+
     //Index for Appending Value to end of Publish String, Initiate string to Null
     int append_index = 0;
     po_ts[append_index] = '\0';
@@ -270,11 +275,12 @@ void loop() {
     append_index = append_value_to_po_ts(timestamp, true, po_ts, append_index);
 
     //Collect and Serial Print Energy Data
-    Serial.print("\n\nPower:");
-    Serial.printf("\nTimeStamp: \t%d", timestamp);
-    
+    Serial.print(F("\n\nPower:"));
+    Serial.print(F("\nTimeStamp: \t"));
+    Serial.print(timestamp);
+
     long int m = millis();
-    for(int i = 0; i < sockets; i++)
+    for (int i = 0; i < sockets; i++)
     {
       mux_select_write(i);
       curr_raw = curr[i].calcIrms(current_samples);
@@ -282,78 +288,81 @@ void loop() {
       append_index = append_value_to_po_ts(power, false, po_ts, append_index);
       Serial.printf("\nDevice %d (W): \t%f", i, power);
     }
-    Serial.printf("\nMeasurement and Appending Time (ms): %d", millis() - m); 
+    Serial.print(F("\nMeasurement and Appending Time (ms): "));
+    Serial.print(millis() - m);
 
     //MQTT Connection and Time Sync Check
-    if(mqttclient.connected() && time_synced)
-    //If Connected and Time Synced
-    //Publish the Publish String to MQTT Broker and Indicate Appropriately
+    if (mqttclient.connected() && time_synced)
+      //If Connected and Time Synced
+      //Publish the Publish String to MQTT Broker and Indicate Appropriately
     {
       bool res;
       res = pubobject.publish(po_ts);
-      if(res)
+      if (res)
       {
-        digitalWrite(mqtt_pub_led, HIGH);
-        delay(default_delay_interval/5);
-        digitalWrite(mqtt_pub_led, LOW);
+        digitalWrite(ind_led, HIGH);
+        delay(default_delay_interval / 5);
+        digitalWrite(ind_led, LOW);
       }
     }
     else
-    //If MQTT not Connected or Time not Synced
+      //If MQTT not Connected or Time not Synced
     {
-      if(time_synced)
-      //If not Connected, Attempt Connection
+      if (time_synced)
+        //If not Connected, Attempt Connection
       {
-        Serial.print("\nMQTT Connection Lost.. Reconnecting");
+        Serial.print(F("\nMQTT Connection Lost.. Reconnecting"));
         mqtt_connect();
       }
     }
 
-    //Get New Subscription from Feed and 
+    //Get New Subscription from Feed and
     //Control Appliances, then
     //Print Config Data,
     //Do this after Power has been collected
     //Every spic seconds
-    if(timestamp % spic == 0)
+    if (timestamp % spic == 0)
     {
       //Read Subscription
       long int control_time;
-      
+
       Adafruit_MQTT_Subscribe *sub;
       sub = mqttclient.readSubscription(2000);
       packet = (char*)subobject.lastread;
-      if(strcmp(packet, "") !=  0)
+      if (strcmp(packet, "") !=  0)
       {
         control_time = parse_control_packet(packet, sch_status);
-        
-        Serial.printf("\nNew Packet Received from Control Feed:\n%s", packet);
-        Serial.printf("\nControl Timestamp: %d", control_time);
-        Serial.print("\nControl Word: ");
-        for(int i = 0; i < max_sockets; i++)
+
+        Serial.print(F("\nNew Packet Received from Control Feed:\n"));
+        Serial.print(packet);
+        Serial.print(F("\nControl Timestamp: "));
+        Serial.print(control_time);
+        Serial.print(F("\nControl Word: "));
+        for (int i = 0; i < max_sockets; i++)
           Serial.print(sch_status[i]);
-      
+
       }
-      
+
       //Appliance Output Control
-      //Send Control Word to Register if 
+      //Send Control Word to Register if
       //Received Control Packet matches current timestamp
-      if(timestamp == control_time)
+      if (timestamp == control_time)
       {
-        Serial.print("\nControl Word Sent to Register");
-        for(int device = 0; device < max_sockets; device++)
+        Serial.print(F("\nControl Word Sent to Register"));
+        for (int device = 0; device < max_sockets; device++)
         {
           //Write the Status of the device to Output Pin
           digitalWrite(serial_out, sch_status[device]);
           //Delay 100ns Cover Setup and Hold Times for Register IC
           delay(0.1);
-        
+
           digitalWrite(rclk, LOW);
           digitalWrite(rclk, HIGH);
           delay(1);
           digitalWrite(rclk, LOW);
           delay(1);
         }
-      
+
         //Pulse DFF Clock
         digitalWrite(dclk, HIGH);
         delay(1);
@@ -367,9 +376,9 @@ void loop() {
     //plag used to display config data and read subscription only ONCE every spic seconds
     pflag = 1;
   }
-  else if(time_object.getSeconds() % spie != 0)
+  else if (time_object.getSeconds() % spie != 0)
     pflag = 0;
-    
+
 }
 //
 
@@ -377,18 +386,18 @@ void loop() {
 void handle_root()
 {
   //If Conected to WiFi, take to WiFi connected Page else to Not Connected
-  if( WiFi.status() == WL_CONNECTED )
-    server.send(200, "text/html", html_root_conn); 
+  if ( WiFi.status() == WL_CONNECTED )
+    server.send(200, "text/html", html_root_conn);
   else
-    server.send(200, "text/html", html_root); 
+    server.send(200, "text/html", html_root);
 }
 
 void handle_disconnect_wifi()
 {
   //Disconnect WiFi and send user to Home
   WiFi.disconnect();
-  digitalWrite(ind_led,HIGH);
-  Serial.print("\nWiFi Disconnected");
+  digitalWrite(ind_led, HIGH);
+  Serial.print(F("\nWiFi Disconnected Via HTTP Interface"));
   server.sendHeader("Location", "/");
   server.send(303);
 }
@@ -396,70 +405,70 @@ void handle_disconnect_wifi()
 void handle_connect_wifi()
 {
   //If connection unsuccesful, send to try again page else continue to connect wifi
-  if(sflag == 1)
-      server.send(200, "text/html", html_connect_wifi_tryagain);
+  if (sflag == 1)
+    server.send(200, "text/html", html_connect_wifi_tryagain);
   else
-      server.send(200, "text/html", html_connect_wifi);
+    server.send(200, "text/html", html_connect_wifi);
   sflag = 0;
 }
 
 void handle_wifi_login()
 {
-  if(server.hasArg("ssid") && server.hasArg("pass"))
+  if (server.hasArg("ssid") && server.hasArg("pass"))
   {
     const String ssid_user(server.arg("ssid"));   // Recieve SSID and password from the User using the web application
     const String pass_user(server.arg("pass"));
 
     int i = 0;
-    while(ssid_user[i] != '\0')       //Parsing the SSID and storing it to a char pointer
+    while (ssid_user[i] != '\0')      //Parsing the SSID and storing it to a char pointer
       i++;
-    char* s = new char[i+1];
-    for(int j=0; j<i; j++)
+    char* s = new char[i + 1];
+    for (int j = 0; j < i; j++)
     {
-      if(ssid_user[j]=='+')
+      if (ssid_user[j] == '+')
         s[j] = ' ';
       else
         s[j] = ssid_user[j];
-      s[j+1] = '\0';
+      s[j + 1] = '\0';
     }
-    Serial.print("\n\nRequest Received for STA WiFi Connection : ");
-    Serial.print("\nSSID: ");
+    Serial.print(F("\n\nRequest Received for STA WiFi Connection : "));
+    Serial.print(F("\nSSID: "));
     Serial.print(s);
 
     i = 0;
-    while(pass_user[i] != '\0')       //Parsing the password and storing it to a char pointer
+    while (pass_user[i] != '\0')      //Parsing the password and storing it to a char pointer
       i++;
-    char* p = new char[i+1];
-    for(int j=0; j<i; j++)
+    char* p = new char[i + 1];
+    for (int j = 0; j < i; j++)
     {
-      if(pass_user[j]=='+')
+      if (pass_user[j] == '+')
         p[j] = ' ';
       else
         p[j] = pass_user[j];
-      p[j+1] = '\0';
+      p[j + 1] = '\0';
     }
-    Serial.print("\nPass: ");
+    Serial.print(F("\nPass: "));
     //Serial.print(p);
-    
-    sta_setup(s, p);                  //Setup WiFi connection using the given credentials
-    
-    if(WiFi.status() == WL_CONNECTED) //Redirects to home page if Connectd successfully
+
+    sta_setup(s, p);                   //Setup WiFi connection using the given credentials
+
+    if (WiFi.status() == WL_CONNECTED) //Redirects to home page if Connectd successfully
     {
       server.sendHeader("Location", "/");
       server.send(303);
     }
-    else                              //Redirect to connect page if cannot connect. 
-    {                                 //BUG 1, Connection takes time and browser times out
+    else                              //Redirect to connect page if cannot connect.
+    { //BUG 1, Connection takes time and browser times out
       sflag = 1;
       server.sendHeader("Location", "/connect_wifi");
       server.send(303);
     }
-    
+
     delete[] p;                       // Delete dynamically allocated memory
     delete[] s;
   }
   else
-  //If user doesnt input credentials, redirect to same page
+    //If user doesnt input credentials, redirect to same page
   {
     sflag = 1;
     server.sendHeader("Location", "/connect_wifi");
@@ -477,19 +486,19 @@ void handle_notfound()
 int append_value_to_po_ts(double val, bool timestamp, char* po, int end_index)
 // Appends the passed value in the right format to the passed Char Array (Passed as Pointer po)
 {
-  if(timestamp)
+  if (timestamp)
   {
     long int t = val;
     int ap, up, down;
-    
-    up = t / pow(10,5);
+
+    up = t / pow(10, 5);
     down = t - up * pow(10, 5);
-    
-    for(end_index = 0; end_index <= 9; end_index++)
+
+    for (end_index = 0; end_index <= 9; end_index++)
     {
       ap = up / pow(10, 4);
       po[end_index] = ap + 48;
-      
+
       up *= 10;
       up = up % 100000;
       up += down / pow(10, 4);
@@ -504,14 +513,14 @@ int append_value_to_po_ts(double val, bool timestamp, char* po, int end_index)
   {
     // Append Power Value at the End
     po[end_index] = ',';
-    po[end_index + 10] = '\0';
-    
-    int p;
-    for(int i = 1; i <= 9; i++)
+    po[end_index + 8] = '\0';
+
+    int p, i;
+    for (i = 1; i <= 7; i++)
     {
       p = val / pow(10, 3);
       p = p % 10;
-      if(i == 5)
+      if (i == 5)
       {
         po[end_index + i] = '.';
         i++;
@@ -519,21 +528,21 @@ int append_value_to_po_ts(double val, bool timestamp, char* po, int end_index)
       po[end_index + i] = p + 48;
       val *= 10;
     }
-    return end_index + 10;
+    return end_index + i;
   }
 }
 
 void mux_select_write(int val)
 /*
- * Writes the Select Pins to the Input Multiplexer
- * Integer val is the index of the input to be selected
+   Writes the Select Pins to the Input Multiplexer
+   Integer val is the index of the input to be selected
 */
 {
-  
-  for(int m = 0; m < socket_pins; m++)
+
+  for (int m = 0; m < socket_pins; m++)
   {
     int comp = pow(2, m);
-    if((val & comp) != 0)
+    if ((val & comp) != 0)
       digitalWrite(sel_pins[m], HIGH);
     else
       digitalWrite(sel_pins[m], LOW);
@@ -542,30 +551,30 @@ void mux_select_write(int val)
 
 long long parse_control_packet(char* packet, bool* control)
 /*
- * Parses the Received Control Packet and Stores the Control Values 
- * in the Array taken as an arguement for the function
- */
+   Parses the Received Control Packet and Stores the Control Values
+   in the Array taken as an arguement for the function
+*/
 {
   long long timestamp = 0;
   int i, index;
 
-  packet[0] == '{' ? index = 1: index = 0;
+  packet[0] == '{' ? index = 1 : index = 0;
 
   //Preset the Control Word to Zero
-  //Sets the End Bits to Zero when 
+  //Sets the End Bits to Zero when
   //sockets < maxsockets
-  for(i = 0; i < max_sockets; i++)
+  for (i = 0; i < max_sockets; i++)
     control[i] = 0;
-  
-  for( ; packet[index] != ',' ; index ++)
+
+  for ( ; packet[index] != ',' ; index ++)
   {
     timestamp *= 10;
     timestamp += packet[index] - 48;
   }
 
-  for(i = 0; packet[index] != '\0' ; index++)
+  for (i = 0; packet[index] != '\0' ; index++)
   {
-    if(packet[index] == '0' || packet[index] == '1')
+    if (packet[index] == '0' || packet[index] == '1')
     {
       control[i] = packet[index] - 48;
       i++;
@@ -577,55 +586,56 @@ long long parse_control_packet(char* packet, bool* control)
 void serial_print_config()
 // Print Config Data To Serial
 {
-  Serial.print("\n\n******* Current Configuration *******");
-  Serial.print("\nWiFi Connected: \t\t");
-  if(WiFi.status() == WL_CONNECTED) 
+  Serial.print(F("\n\n******* Current Configuration *******"));
+  Serial.print(F("\nWiFi Connected:  \t"));
+  if (WiFi.status() == WL_CONNECTED)
   {
-    Serial.print("Yes"); 
-    Serial.print("\nWiFi SSID: \t\t\t");
+    Serial.print(F("Yes"));
+    Serial.print(F("\nWiFi SSID:       \t"));
     Serial.print(WiFi.SSID());
-    Serial.print("\nIP Address: \t\t");
+    Serial.print(F("\nIP Address:      \t"));
     Serial.print(WiFi.localIP());
   }
   else
-    Serial.print("No");
-  if(enable_ap)
+    Serial.print(F("No"));
+  if (enable_ap)
   {
-    Serial.print("\nSoft AP Status: \t\tActive");
-    Serial.printf("\nSoft AP Clients:\t\t%d", WiFi.softAPgetStationNum());
+    Serial.print(F("\nSoft AP Status:  \tActive"));
+    Serial.print(F("\nSoft AP Clients: \t%d"));
+    Serial.print(WiFi.softAPgetStationNum());
   }
   else
-    Serial.print("\nSoft AP Status: \t\tInactive");
-  Serial.print("\nTime Synced: \t\t");
-  ::time_synced ? Serial.print("Yes") : Serial.print("No");
-  Serial.print("\nMQTT Connection: \t");
-  mqttclient.connected() ? Serial.print("Alive") : Serial.print("Dead"); 
-  Serial.print("\n*************************************");
+    Serial.print(F("\nSoft AP Status:  \tInactive"));
+  Serial.print(F("\nTime Synced:     \t"));
+  ::time_synced ? Serial.print(F("Yes")) : Serial.print(F("No"));
+  Serial.print(F("\nMQTT Connection: \t"));
+  mqttclient.connected() ? Serial.print(F("Alive")) : Serial.print(F("Dead"));
+  Serial.print(F("\n*************************************"));
 }
 
-void sta_setup(char *s, char* p)    
-/* 
-  *  For Setting up STA mode WiFi connections via user input.
-  *  Uses the HTML Server through the Soft Access Point to get WiFi network creds from 
-  *  user and setup the STA Mode Connection
+void sta_setup(char *s, char* p)
+/*
+     For Setting up STA mode WiFi connections via user input.
+     Uses the HTML Server through the Soft Access Point to get WiFi network creds from
+     user and setup the STA Mode Connection
 */
 {
   WiFi.begin(s, p);
   Serial.println("\nConnecting via STA mode");
-  while(WiFi.status() != WL_CONNECTED)
+  while (WiFi.status() != WL_CONNECTED)
   {
     delay(1000);
     Serial.print(".");
     sflag++;
-    if(sflag > conn_wp)
-        break;
+    if (sflag > conn_wp)
+      break;
   }
-  if(sflag < conn_wp)
+  if (sflag < conn_wp)
   {
     digitalWrite(ind_led, LOW);
     Serial.print("\nConnection Established! IP: ");
     Serial.print(WiFi.localIP());
-    if(!::time_synced)
+    if (!::time_synced)
     {
       ret = time_object.update();
       ret ? ::time_synced = true : ::time_synced = false;
@@ -639,20 +649,20 @@ void sta_setup(char *s, char* p)
 
 void ap_button_ontrigger()
 /*
- * When Control Button Pressed 
- * Acts as Daemon on Button Press only, not on enable_ap flag
- */
+   When Control Button Pressed
+   Acts as Daemon on Button Press only, not on enable_ap flag
+*/
 {
   ::current_millis = millis();
-  if(::current_millis > ::last_millis + 3*default_delay_interval)  
-  /*
-   * If Button pressed atleast after 3*default_delay_interval enable change
-   * Prevents Burst Presses or Fluctuation Errors
-   */
+  if (::current_millis > ::last_millis + 3 * default_delay_interval)
+    /*
+       If Button pressed atleast after 3*default_delay_interval enable change
+       Prevents Burst Presses or Fluctuation Errors
+    */
   {
     enable_ap = !enable_ap;
     ::last_millis = ::current_millis;
-    if(enable_ap)
+    if (enable_ap)
       begin_ap();
     else
       close_ap();
@@ -676,7 +686,7 @@ bool close_ap()
 {
   //Close Soft AP when called and return True if successfully closed
   ret = WiFi.softAPdisconnect(true);
-  if(ret)
+  if (ret)
     Serial.print("\nAccess Point: Closed");
   else
     Serial.print("\nCannot Close Access Point try again");
@@ -686,26 +696,26 @@ bool close_ap()
 void mqtt_connect()
 {
   int r = 1;
-  if(mqttclient.connected())  //return nothing if already Connected
+  if (mqttclient.connected()) //return nothing if already Connected
     return;
-  if(WiFi.status() != WL_CONNECTED)   //Set flag if WiFi not connected
+  if (WiFi.status() != WL_CONNECTED)  //Set flag if WiFi not connected
     r = -2;
   Serial.print("\nAdafruit MQTT Connecting");
-  while((ret = mqttclient.connect()) != 0 && r != -2)
-  //if WiFi connected and MQTT Connection failed, retry in 1 second
+  while ((ret = mqttclient.connect()) != 0 && r != -2)
+    //if WiFi connected and MQTT Connection failed, retry in 1 second
   {
     Serial.println();
     Serial.print("\nRetrying MQTT connection in 1 second...");
-    delay(default_delay_interval/2);
+    delay(default_delay_interval / 2);
     mqttclient.disconnect();
-    delay(default_delay_interval/2);
+    delay(default_delay_interval / 2);
     r--;    //Retry only once then exit from retry loop
-    if( r < 0 )
+    if ( r < 0 )
       break;
     else
       continue;
   }
   //Serial Description of Connection Result
-  r >= 0 ? Serial.print("\nMQTT Connected"): Serial.print("\nWarning : Cannot Connect to MQTT Service, data would not be published");
+  r >= 0 ? Serial.print("\nMQTT Connected") : Serial.print("\nWarning : Cannot Connect to MQTT Service, data would not be published");
 }
 //
