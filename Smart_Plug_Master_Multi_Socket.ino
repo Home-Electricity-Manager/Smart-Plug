@@ -1,12 +1,23 @@
 /*
-   Code for the Energy Boosters' Teams Smart Plug Multi Socket on the NodeMCU 0.9 Module
-   Developed by Archit Jain
+   Code for the Energy Boosters' Team's Smart Plug Single Socket 
+   Developed on the NodeMCU 0.9 Module
+   by Archit Jain
 
    Maximum Number of Possible Sockets for the ESP8266 (NodeMCU) is 8
    owing to a limited number of gpio pins on the dev board
 
    The Code is Largely Independent of the Board Specifics other than
    the Wifi Library, Webserver and Pin Bindings
+
+   The Difference Between the Single Socket and Multi Socket is only 
+   that the single socket device uses only a D-Flip Flop to hold the 
+   appliance status value and does not need a 8-Bit Serial-In, Parallel-Out
+   Register which is required in case of Multi Sockets.
+
+   This also leaves a digital pin free on the single socket device 
+   as rclk(Register Clock) is no longer neccesary
+
+   Detailed Explanation on https://github.com/j-archit/Smart-Plug
 */
 
 //Include Required Libraries
